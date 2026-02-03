@@ -16,6 +16,7 @@
       {
         devShells.default = pkgs.mkShell {
           buildInputs = [
+            pkgs.qemu
             pkgs.go_1_25
             pkgs.gotools
             pkgs.gnumake
