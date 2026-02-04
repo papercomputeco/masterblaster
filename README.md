@@ -1,6 +1,8 @@
-# 📻 Masterblaster - `mb`
+# Masterblaster - `mb`
 
 Create, manage, orchestrate sandboxed Linux VMs for AI agents.
+
+<img width="1108" height="540" alt="Screenshot 2026-02-03 at 10 09 29 PM" src="https://github.com/user-attachments/assets/51d2de95-e5eb-41bf-b434-ace7f109af44" />
 
 ## Quick start
 
@@ -35,7 +37,7 @@ ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}"
 ### 3. Launch
 
 ```bash
-mb init ./my-agent.toml     # Create VM, boot, wait for SSH to be ready
+mb init ./my-agent.toml   # Create VM, boot, wait for SSH to be ready
 mb ssh my-agent           # SSH into a VM
 mb list                   # See VMs
 mb stop my-agent          # Graceful shutdown
