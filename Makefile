@@ -1,17 +1,23 @@
 BINARY := mb
-VERSION := 0.1.0
+VERSION := 0.2.0
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 
-.PHONY: build clean test install
+.PHONY: build clean test install fmt vet
 
 build:
-	go build $(LDFLAGS) -o $(BINARY) .
+	go build $(LDFLAGS) -o ./build/$(BINARY) .
 
 install: build
-	cp $(BINARY) /usr/local/bin/
+	cp ./build/$(BINARY) /usr/local/bin/
 
 test:
 	go test ./...
 
+fmt:
+	go fmt ./...
+
+vet:
+	go vet ./...
+
 clean:
-	rm -f $(BINARY)
+	rm -rf ./build/

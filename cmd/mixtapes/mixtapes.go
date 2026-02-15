@@ -1,0 +1,78 @@
+// Package mixtapescmder provides the mixtapes command group for managing
+// locally available StereOS mixtape images.
+package mixtapescmder
+
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/papercomputeco/masterblaster/pkg/mixtapes"
+	"github.com/papercomputeco/masterblaster/pkg/ui"
+)
+
+const mixtapesLongDesc string = `Manage locally available StereOS mixtapes (bootable VM images).
+
+Mixtapes are pre-configured StereOS images bundled with agent harnesses
+and workflows. Use "mb mixtapes ls" to see what's available locally and
+"mb mixtapes pull <name>" to download new ones.
+
+Examples:
+  mb mixtapes ls
+  mb mixtapes pull base`
+
+const mixtapesShortDesc string = "Manage StereOS mixtapes"
+
+// NewMixtapesCmd creates the mixtapes command group with ls and pull subcommands.
+func NewMixtapesCmd(configDirFn func() string) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "mixtapes",
+		Short: mixtapesShortDesc,
+		Long:  mixtapesLongDesc,
+	}
+
+	cmd.AddCommand(newMixtapesLsCmd(configDirFn))
+	cmd.AddCommand(newMixtapesPullCmd(configDirFn))
+
+	return cmd
+}
+
+func newMixtapesLsCmd(configDirFn func() string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "ls",
+		Short: "List locally available mixtapes",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runMixtapesLs(configDirFn())
+		},
+	}
+}
+
+func newMixtapesPullCmd(configDirFn func() string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "pull <name>",
+		Short: "Pull a mixtape from the registry",
+		Long: `Download a StereOS mixtape from the Paper Compute registry (or a
+third-party OCI registry) to ~/.mb/mixtapes/.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runMixtapesPull(configDirFn(), args[0])
+		},
+	}
+}
+
+func runMixtapesLs(baseDir string) error {
+	list, err := mixtapes.List(baseDir)
+	if err != nil {
+		return err
+	}
+	mixtapes.PrintList(list)
+	return nil
+}
+
+func runMixtapesPull(baseDir, name string) error {
+	ui.Status("Pulling mixtape %q...", name)
+	if err := mixtapes.Pull(baseDir, name); err != nil {
+		return err
+	}
+	ui.Success("Mixtape %q pulled", name)
+	return nil
+}
