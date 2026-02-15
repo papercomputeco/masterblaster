@@ -16,20 +16,24 @@ import (
 	"github.com/papercomputeco/masterblaster/pkg/vsock"
 )
 
-// QEMUBackend implements the Backend interface using qemu-system-aarch64.
-// It boots StereOS images with HVF acceleration on Apple Silicon Macs,
-// uses vsock (via TCP forwarding) for stereosd communication, and QMP
-// for hypervisor control.
+// QEMUBackend implements the Backend interface using QEMU.
+// Platform-specific behavior (acceleration, vsock transport, EFI paths)
+// is configured via QEMUPlatformConfig, injected at construction time
+// by the build-tagged NewPlatformBackend() functions.
 type QEMUBackend struct {
-	baseDir string // ~/.mb
+	baseDir  string
+	platform *QEMUPlatformConfig
 }
 
-// NewQEMUBackend creates a new QEMU backend with the given base directory.
-func NewQEMUBackend(baseDir string) *QEMUBackend {
-	return &QEMUBackend{baseDir: baseDir}
+// NewQEMUBackend creates a new QEMU backend with the given base directory
+// and platform-specific configuration.
+func NewQEMUBackend(baseDir string, platform *QEMUPlatformConfig) *QEMUBackend {
+	return &QEMUBackend{baseDir: baseDir, platform: platform}
 }
 
 // Up creates and starts a new sandbox VM from the given instance configuration.
+// It creates the VM directory, disk, and EFI vars from scratch, then delegates
+// to boot() for port allocation, QEMU launch, and post-boot provisioning.
 func (q *QEMUBackend) Up(ctx context.Context, inst *Instance) error {
 	if inst.Config == nil {
 		return fmt.Errorf("instance %q has no configuration", inst.Name)
@@ -77,30 +81,83 @@ func (q *QEMUBackend) Up(ctx context.Context, inst *Instance) error {
 		return fmt.Errorf("initializing EFI vars: %w", err)
 	}
 
-	// Allocate ports
-	sshPort, err := allocatePort()
-	if err != nil {
-		os.RemoveAll(vmDir)
-		return fmt.Errorf("allocating SSH port: %w", err)
-	}
-	inst.SSHPort = sshPort
-
-	vsockTCPPort, err := allocatePort()
-	if err != nil {
-		os.RemoveAll(vmDir)
-		return fmt.Errorf("allocating vsock port: %w", err)
-	}
-	inst.VsockPort = vsockTCPPort
-
-	inst.QMPSocket = filepath.Join(vmDir, "qmp.sock")
-
 	// Save jcard.toml into the VM directory for reference
 	if err := saveJcard(vmDir, cfg); err != nil {
 		os.RemoveAll(vmDir)
 		return fmt.Errorf("saving jcard config: %w", err)
 	}
 
-	// Save state
+	// Boot: allocate ports, start QEMU, post-boot provisioning
+	if err := q.boot(ctx, inst, cfg); err != nil {
+		// If QEMU hasn't started yet, clean up the VM dir.
+		// If it has (post-boot failure), leave it for debugging.
+		if inst.PID == 0 {
+			os.RemoveAll(vmDir)
+		}
+		return err
+	}
+
+	return nil
+}
+
+// Start re-boots an existing stopped sandbox. The VM directory and disk
+// are reused from a previous Up call. It re-reads the saved jcard.toml
+// from the VM directory, allocates new ports, and boots QEMU.
+func (q *QEMUBackend) Start(ctx context.Context, inst *Instance) error {
+	// Ensure the VM directory exists
+	if inst.Dir == "" {
+		inst.Dir = filepath.Join(VMsDir(q.baseDir), inst.Name)
+	}
+	if _, err := os.Stat(inst.Dir); os.IsNotExist(err) {
+		return fmt.Errorf("sandbox %q has no VM directory at %s", inst.Name, inst.Dir)
+	}
+
+	// Load config from the saved jcard.toml in the VM directory if not
+	// already attached (the daemon may have re-loaded from a new config).
+	cfg := inst.Config
+	if cfg == nil {
+		var err error
+		cfg, err = config.Load(inst.JcardPath())
+		if err != nil {
+			return fmt.Errorf("loading saved config for %q: %w", inst.Name, err)
+		}
+		inst.Config = cfg
+	}
+
+	// Clean up stale runtime files from the previous run
+	os.Remove(inst.QMPSocket)
+	os.Remove(inst.PIDFilePath())
+
+	// Boot: allocate ports, start QEMU, post-boot provisioning
+	return q.boot(ctx, inst, cfg)
+}
+
+// boot is the shared boot sequence used by both Up (new sandbox) and
+// Start (re-boot existing). It allocates ports, updates state.json,
+// starts QEMU, and runs post-boot provisioning (stereosd handshake,
+// secret injection, shared directory mounting).
+func (q *QEMUBackend) boot(ctx context.Context, inst *Instance, cfg *config.JcardConfig) error {
+	// Allocate ports
+	sshPort, err := allocatePort()
+	if err != nil {
+		return fmt.Errorf("allocating SSH port: %w", err)
+	}
+	inst.SSHPort = sshPort
+
+	// Allocate a TCP port for the stereosd control plane.
+	// TODO(@jpmcb): Once native AF_VSOCK transport is implemented for
+	// Linux/KVM, this can be made conditional on ControlPlaneMode == "tcp".
+	// For now, all platforms use TCP through QEMU user-mode networking
+	// and stereosd listens on TCP via --listen-mode auto.
+	vsockTCPPort, err := allocatePort()
+	if err != nil {
+		return fmt.Errorf("allocating control plane port: %w", err)
+	}
+	inst.VsockPort = vsockTCPPort
+
+	inst.QMPSocket = filepath.Join(inst.Dir, "qmp.sock")
+
+	// Save/update state
 	stateFile := &StateFile{
 		Name:        inst.Name,
 		CreatedAt:   time.Now().UTC(),
@@ -109,23 +166,21 @@ func (q *QEMUBackend) Up(ctx context.Context, inst *Instance) error {
 		Memory:      cfg.Resources.Memory,
 		Disk:        cfg.Resources.Disk,
 		NetworkMode: cfg.Network.Mode,
-		SSHPort:     sshPort,
-		VsockPort:   vsockTCPPort,
+		SSHPort:     inst.SSHPort,
+		VsockPort:   inst.VsockPort,
 	}
-	if err := saveState(vmDir, stateFile); err != nil {
-		os.RemoveAll(vmDir)
+	if err := saveState(inst.Dir, stateFile); err != nil {
 		return fmt.Errorf("saving state: %w", err)
 	}
 
 	// Build and start QEMU
 	if err := q.startQEMU(ctx, inst, cfg); err != nil {
-		os.RemoveAll(vmDir)
 		return fmt.Errorf("starting QEMU: %w", err)
 	}
 
 	// Post-boot: wait for stereosd, inject secrets, mount shares
 	if err := q.postBoot(ctx, inst, cfg); err != nil {
-		// Don't remove VM dir on post-boot failure; the VM is running.
+		// Don't kill QEMU on post-boot failure; the VM is running.
 		// Let the user debug with `mb ssh` or `mb down`.
 		return fmt.Errorf("post-boot provisioning: %w", err)
 	}
@@ -135,9 +190,9 @@ func (q *QEMUBackend) Up(ctx context.Context, inst *Instance) error {
 
 // Down gracefully stops the VM.
 func (q *QEMUBackend) Down(ctx context.Context, inst *Instance, timeout time.Duration) error {
-	// First try vsock shutdown (preferred: allows stereosd to unmount, sync, etc.)
-	if inst.VsockPort > 0 {
-		if err := q.vsockShutdown(ctx, inst); err == nil {
+	// First try stereosd shutdown (preferred: allows stereosd to unmount, sync, etc.)
+	if inst.VsockPort > 0 || q.platform.ControlPlaneMode == "vsock" {
+		if err := q.controlPlaneShutdown(ctx, inst); err == nil {
 			// Wait for process to exit
 			if q.waitForExit(ctx, inst, timeout) {
 				inst.VMState = StateStopped
@@ -318,11 +373,11 @@ func (q *QEMUBackend) LoadInstance(name string) (*Instance, error) {
 	return inst, nil
 }
 
-// startQEMU launches qemu-system-aarch64 as a daemon.
+// startQEMU launches the QEMU system emulator as a daemon.
 func (q *QEMUBackend) startQEMU(ctx context.Context, inst *Instance, cfg *config.JcardConfig) error {
-	qemuBin, err := exec.LookPath("qemu-system-aarch64")
+	qemuBin, err := exec.LookPath(q.platform.Binary)
 	if err != nil {
-		return fmt.Errorf("qemu-system-aarch64 not found: %w\nInstall QEMU: brew install qemu", err)
+		return fmt.Errorf("%s not found: %w\nInstall QEMU: brew install qemu", q.platform.Binary, err)
 	}
 
 	args, err := q.buildArgs(inst, cfg)
@@ -353,9 +408,9 @@ func (q *QEMUBackend) startQEMU(ctx context.Context, inst *Instance, cfg *config
 	return nil
 }
 
-// buildArgs constructs the qemu-system-aarch64 command line arguments.
+// buildArgs constructs the QEMU command line arguments using platform config.
 func (q *QEMUBackend) buildArgs(inst *Instance, cfg *config.JcardConfig) ([]string, error) {
-	efiCode, err := findEFIFirmware()
+	efiCode, err := q.findEFIFirmware()
 	if err != nil {
 		return nil, err
 	}
@@ -371,9 +426,13 @@ func (q *QEMUBackend) buildArgs(inst *Instance, cfg *config.JcardConfig) ([]stri
 	// Parse memory for QEMU (convert GiB -> G, MiB -> M, etc.)
 	memory := convertSizeForQEMU(cfg.Resources.Memory)
 
+	// Machine type and acceleration from platform config
+	machineArg := fmt.Sprintf("%s,accel=%s,highmem=on",
+		q.platform.DefaultMachineType(), q.platform.Accelerator)
+
 	args := []string{
 		// Machine + acceleration
-		"-machine", "virt,accel=hvf,highmem=on",
+		"-machine", machineArg,
 		"-cpu", "host",
 
 		// Resources
@@ -407,12 +466,13 @@ func (q *QEMUBackend) buildArgs(inst *Instance, cfg *config.JcardConfig) ([]stri
 	// Networking
 	args = append(args, q.buildNetworkArgs(inst, cfg)...)
 
-	// Vsock device for host<->guest communication with stereosd.
-	// On the virt machine type (aarch64), use vhost-vsock-device (virtio-mmio).
-	// vhost-vsock-pci is only valid for x86 q35/pc machine types.
-	args = append(args,
-		"-device", fmt.Sprintf("vhost-vsock-device,guest-cid=%d", vsock.VsockGuestCID),
-	)
+	// Control plane device: native vsock when available, otherwise the
+	// stereosd port is forwarded via TCP hostfwd in buildNetworkArgs.
+	if q.platform.ControlPlaneMode == "vsock" {
+		args = append(args,
+			"-device", fmt.Sprintf("%s,guest-cid=%d", q.platform.VsockDevice, vsock.VsockGuestCID),
+		)
+	}
 
 	// Shared directories via virtio-9p
 	for i, shared := range cfg.Shared {
@@ -431,6 +491,8 @@ func (q *QEMUBackend) buildArgs(inst *Instance, cfg *config.JcardConfig) ([]stri
 }
 
 // buildNetworkArgs constructs QEMU network arguments based on config.
+// When the control plane uses TCP transport, the stereosd port is forwarded
+// here alongside SSH. With native vsock, only SSH is forwarded.
 func (q *QEMUBackend) buildNetworkArgs(inst *Instance, cfg *config.JcardConfig) []string {
 	switch cfg.Network.Mode {
 	case "none":
@@ -444,8 +506,13 @@ func (q *QEMUBackend) buildNetworkArgs(inst *Instance, cfg *config.JcardConfig) 
 		}
 
 	default: // "nat"
-		// Build host forward string: always include SSH
+		// Always forward SSH
 		hostfwds := fmt.Sprintf("hostfwd=tcp::%d-:22", inst.SSHPort)
+
+		// Forward stereosd control plane via TCP through SLIRP.
+		// TODO(@jpmcb): Once native AF_VSOCK transport is implemented for
+		// Linux/KVM, this can be skipped when ControlPlaneMode == "vsock".
+		hostfwds += fmt.Sprintf(",hostfwd=tcp::%d-:%d", inst.VsockPort, vsock.VsockPort)
 
 		// Add configured port forwards
 		for _, fwd := range cfg.Network.Forwards {
@@ -462,8 +529,7 @@ func (q *QEMUBackend) buildNetworkArgs(inst *Instance, cfg *config.JcardConfig) 
 // postBoot handles post-boot provisioning: wait for stereosd, inject secrets,
 // mount shared directories.
 func (q *QEMUBackend) postBoot(ctx context.Context, inst *Instance, cfg *config.JcardConfig) error {
-	// Wait for stereosd to be ready via vsock
-	addr := fmt.Sprintf("127.0.0.1:%d", inst.VsockPort)
+	transport := q.controlPlaneTransport(inst)
 
 	// Give the VM a moment to boot
 	time.Sleep(2 * time.Second)
@@ -473,14 +539,14 @@ func (q *QEMUBackend) postBoot(ctx context.Context, inst *Instance, cfg *config.
 	var err error
 	deadline := time.Now().Add(120 * time.Second)
 	for time.Now().Before(deadline) {
-		client, err = vsock.Dial(addr, 5*time.Second)
+		client, err = vsock.Connect(transport, 5*time.Second)
 		if err == nil {
 			break
 		}
 		time.Sleep(3 * time.Second)
 	}
 	if client == nil {
-		return fmt.Errorf("could not connect to stereosd at %s after 120s: %w", addr, err)
+		return fmt.Errorf("could not connect to stereosd via %s after 120s: %w", transport, err)
 	}
 	defer client.Close()
 
@@ -489,6 +555,15 @@ func (q *QEMUBackend) postBoot(ctx context.Context, inst *Instance, cfg *config.
 	defer cancel()
 	if err := client.WaitForReady(readyCtx, 2*time.Second); err != nil {
 		return fmt.Errorf("waiting for stereosd ready: %w", err)
+	}
+
+	// Send jcard.toml config to the guest for agentd
+	cfgBytes, err := config.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshaling config for guest: %w", err)
+	}
+	if err := client.SetConfig(ctx, string(cfgBytes)); err != nil {
+		return fmt.Errorf("setting guest config: %w", err)
 	}
 
 	// Inject secrets
@@ -509,15 +584,29 @@ func (q *QEMUBackend) postBoot(ctx context.Context, inst *Instance, cfg *config.
 	return nil
 }
 
-// vsockShutdown sends a shutdown command to stereosd via vsock.
-func (q *QEMUBackend) vsockShutdown(ctx context.Context, inst *Instance) error {
-	addr := fmt.Sprintf("127.0.0.1:%d", inst.VsockPort)
-	client, err := vsock.Dial(addr, 5*time.Second)
+// controlPlaneShutdown sends a shutdown command to stereosd via the
+// control plane transport.
+func (q *QEMUBackend) controlPlaneShutdown(ctx context.Context, inst *Instance) error {
+	transport := q.controlPlaneTransport(inst)
+	client, err := vsock.Connect(transport, 5*time.Second)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 	return client.Shutdown(ctx, "mb down")
+}
+
+// controlPlaneTransport returns the appropriate Transport for connecting
+// to stereosd based on the platform's control plane mode.
+//
+// TODO(@jpmcb): Implement native AF_VSOCK transport for Linux/KVM.
+// When ControlPlaneMode == "vsock", this should return a VsockTransport
+// that dials AF_VSOCK CID:3 port 1024 directly, bypassing TCP/SLIRP.
+// See the VsockTransport sketch in pkg/vsock/transport.go.
+func (q *QEMUBackend) controlPlaneTransport(inst *Instance) vsock.Transport {
+	// All platforms currently use TCP through QEMU user-mode networking.
+	// stereosd inside the guest listens on TCP via --listen-mode auto.
+	return &vsock.TCPTransport{Host: "127.0.0.1", Port: inst.VsockPort}
 }
 
 // waitForExit polls until the QEMU process exits or timeout.
@@ -538,31 +627,34 @@ func (q *QEMUBackend) waitForExit(_ context.Context, inst *Instance, timeout tim
 	}
 }
 
-// findEFIFirmware locates the UEFI firmware (edk2-aarch64-code.fd).
-func findEFIFirmware() (string, error) {
-	qemuBin, err := exec.LookPath("qemu-system-aarch64")
-	if err != nil {
-		return "", fmt.Errorf("qemu-system-aarch64 not found: %w", err)
+// findEFIFirmware locates the UEFI firmware by searching paths from the
+// platform config. The special prefix "{qemu_prefix}" is resolved at
+// runtime to the QEMU installation prefix.
+func (q *QEMUBackend) findEFIFirmware() (string, error) {
+	// Resolve the QEMU prefix (parent of bin/) for {qemu_prefix} expansion.
+	qemuPrefix := ""
+	if qemuBin, err := exec.LookPath(q.platform.Binary); err == nil {
+		resolved, err := filepath.EvalSymlinks(qemuBin)
+		if err != nil {
+			resolved = qemuBin
+		}
+		qemuPrefix = filepath.Dir(filepath.Dir(resolved))
 	}
 
-	resolved, err := filepath.EvalSymlinks(qemuBin)
-	if err != nil {
-		resolved = qemuBin
+	var searched []string
+	for _, pattern := range q.platform.EFISearchPaths {
+		candidate := pattern
+		if qemuPrefix != "" {
+			candidate = strings.ReplaceAll(candidate, "{qemu_prefix}", qemuPrefix)
+		}
+		searched = append(searched, candidate)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
 	}
 
-	binDir := filepath.Dir(resolved)
-	prefix := filepath.Dir(binDir)
-	candidate := filepath.Join(prefix, "share", "qemu", "edk2-aarch64-code.fd")
-	if _, err := os.Stat(candidate); err == nil {
-		return candidate, nil
-	}
-
-	brewCandidate := "/opt/homebrew/share/qemu/edk2-aarch64-code.fd"
-	if _, err := os.Stat(brewCandidate); err == nil {
-		return brewCandidate, nil
-	}
-
-	return "", fmt.Errorf("EFI firmware not found at %s or %s\nReinstall QEMU: brew reinstall qemu", candidate, brewCandidate)
+	return "", fmt.Errorf("EFI firmware not found; searched:\n  %s\n\nIs QEMU installed?",
+		strings.Join(searched, "\n  "))
 }
 
 // initEFIVars creates a writable EFI variable store (64MB of zeros).

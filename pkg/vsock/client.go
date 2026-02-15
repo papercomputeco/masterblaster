@@ -22,9 +22,9 @@ const (
 )
 
 // Client communicates with stereosd running inside a StereOS guest over
-// a network connection. On Linux with real vsock, this connects to
-// AF_VSOCK CID:3 port 1024. On macOS for development, this connects
-// via TCP to a forwarded port.
+// a network connection. The underlying transport is abstracted via the
+// Transport interface, allowing TCP (macOS/HVF), AF_VSOCK (Linux/KVM),
+// or other transports to be used interchangeably.
 type Client struct {
 	conn    net.Conn
 	scanner *bufio.Scanner
@@ -32,15 +32,29 @@ type Client struct {
 	mu      sync.Mutex
 }
 
-// Dial connects to stereosd. The address format depends on the transport:
-// for TCP (development): "127.0.0.1:1024"
-// for vsock (production): use DialVsock instead.
+// Connect establishes a connection to stereosd using the given transport.
+// The transport determines the underlying mechanism (TCP, AF_VSOCK, etc.).
+func Connect(transport Transport, timeout time.Duration) (*Client, error) {
+	conn, err := transport.Dial(timeout)
+	if err != nil {
+		return nil, err
+	}
+	return newClient(conn), nil
+}
+
+// Dial connects to stereosd via TCP at the given address.
+// This is a convenience wrapper around Connect with a TCPTransport.
+// Deprecated: prefer Connect with an explicit Transport.
 func Dial(address string, timeout time.Duration) (*Client, error) {
 	conn, err := net.DialTimeout("tcp", address, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to stereosd at %s: %w", address, err)
 	}
+	return newClient(conn), nil
+}
 
+// newClient creates a Client from an established connection.
+func newClient(conn net.Conn) *Client {
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB max message
 
@@ -48,7 +62,7 @@ func Dial(address string, timeout time.Duration) (*Client, error) {
 		conn:    conn,
 		scanner: scanner,
 		enc:     json.NewEncoder(conn),
-	}, nil
+	}
 }
 
 // Close closes the connection to stereosd.
@@ -106,6 +120,24 @@ func (c *Client) Ping(ctx context.Context) error {
 		return fmt.Errorf("ping: expected pong, got %s", resp.Type)
 	}
 	return nil
+}
+
+// SetConfig sends the jcard.toml configuration to the guest. stereosd writes
+// it to /etc/stereos/jcard.toml where agentd picks it up via its reconciliation loop.
+func (c *Client) SetConfig(ctx context.Context, content string) error {
+	env, err := NewEnvelope(MsgSetConfig, &ConfigPayload{
+		Content: content,
+	})
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.send(ctx, env)
+	if err != nil {
+		return fmt.Errorf("set config: %w", err)
+	}
+
+	return checkAck(resp, MsgSetConfig)
 }
 
 // InjectSecret writes a secret to the guest's tmpfs secret store.

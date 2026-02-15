@@ -44,7 +44,10 @@ func runServe(cmd *cobra.Command, baseDir string) error {
 		return errDaemonAlreadyRunning
 	}
 
-	backend := vm.NewQEMUBackend(baseDir)
+	backend, err := vm.NewPlatformBackend(baseDir)
+	if err != nil {
+		return err
+	}
 	d := daemon.New(backend, baseDir)
 
 	ui.Status("Starting Masterblaster daemon...")

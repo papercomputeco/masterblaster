@@ -77,23 +77,36 @@ file > default.
   daemon. Provides `Up()`, `Down()`, `Status()`, `Destroy()`, `List()`.
 
 - **`pkg/vm/`** -- VM lifecycle management.
-  - `backend.go` defines the `Backend` interface (`Up`, `Down`, `ForceDown`,
-    `Destroy`, `Status`, `List`, `LoadInstance`).
-  - `qemu.go` is the QEMU backend. It builds `qemu-system-aarch64` args with
-    vsock device, virtio-9p shares, and configurable port forwards. Post-boot
-    it connects to stereosd via vsock to inject secrets and mount directories.
+  - `backend.go` defines the `Backend` interface (`Up`, `Start`, `Down`,
+    `ForceDown`, `Destroy`, `Status`, `List`, `LoadInstance`).
+  - `platform.go` defines `QEMUPlatformConfig` -- platform-specific settings
+    (accelerator, binary, EFI paths, control plane mode) injected into the
+    QEMU backend at construction time.
+  - `qemu.go` is the QEMU backend. It uses `QEMUPlatformConfig` to build
+    QEMU args with the correct accelerator (`hvf`/`kvm`), binary, and EFI
+    firmware paths. Post-boot it connects to stereosd via the platform's
+    control plane transport to inject secrets and mount directories.
   - `qmp.go` is a minimal QMP client for QEMU process control.
   - `image.go` handles mixtape resolution, qcow2 overlay creation, and raw
     image copying/resizing.
   - `state.go` persists VM metadata as `state.json`.
   - `types.go` defines `State`, `Instance`, and path helpers.
-  - `backend_darwin_arm64.go`, `backend_linux.go`, `backend_other.go` provide
-    platform-specific `NewPlatformBackend()` dispatch via build tags.
+  - `backend_darwin_arm64.go` -- `NewPlatformBackend()` for macOS/Apple Silicon.
+    Configures QEMU with `accel=hvf` and `ControlPlaneMode: "tcp"` (no native
+    vsock on macOS/HVF).
+  - `backend_linux.go` -- `NewPlatformBackend()` for Linux. Configures QEMU
+    with `accel=kvm` and `ControlPlaneMode: "vsock"` (native `vhost-vsock-pci`).
+  - `backend_other.go` -- Returns an error on unsupported platforms.
 
-- **`pkg/vsock/`** -- Host-side vsock client matching stereosd's ndjson protocol.
-  `protocol.go` defines message types and payload structs. `client.go` provides
-  `Dial()`, `Ping()`, `InjectSecret()`, `Mount()`, `Shutdown()`, `GetHealth()`,
-  and `WaitForReady()`.
+- **`pkg/vsock/`** -- Host-side client for communicating with stereosd.
+  - `transport.go` defines the `Transport` interface, abstracting the
+    connection mechanism. `TCPTransport` is the current implementation
+    (used on macOS/HVF). `VsockTransport` (AF_VSOCK, for Linux/KVM) is
+    planned.
+  - `client.go` provides `Connect(transport, timeout)` and message methods:
+    `Ping()`, `InjectSecret()`, `Mount()`, `Shutdown()`, `GetHealth()`,
+    `WaitForReady()`.
+  - `protocol.go` defines the ndjson wire format and message types.
 
 - **`pkg/mixtapes/`** -- Manages local mixtape images in `$config-dir/mixtapes/`.
   `List()` scans available mixtapes, `Pull()` is the OCI pull placeholder
@@ -109,7 +122,8 @@ file > default.
 
 1. **Daemon architecture.** The daemon (`mb serve`) owns all VM lifecycle. CLI
    commands are thin RPC clients. The daemon can auto-start via `mb up` if not
-   running (fork + setsid).
+   running (fork + setsid). `mb up` is idempotent: if the sandbox is already
+   running it's a no-op, if stopped it re-boots the existing disk.
 
 2. **Backend interface is the key abstraction.** All VM operations go through
    `vm.Backend`. QEMU is the only implementation today. Platform-specific
@@ -205,7 +219,10 @@ file > default.
 ### Changing the QEMU command line
 
 Edit `buildArgs()` in `pkg/vm/qemu.go`. The full QEMU invocation is assembled
-there from the `Instance` and `JcardConfig`.
+there from the `Instance` and `JcardConfig`. Platform-specific settings
+(accelerator, machine type, EFI paths, vsock device) come from
+`QEMUPlatformConfig` -- edit the platform backend files
+(`backend_darwin_arm64.go`, `backend_linux.go`) to change those.
 
 ### Debugging boot issues
 
