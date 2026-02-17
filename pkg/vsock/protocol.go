@@ -18,6 +18,7 @@ const (
 	MsgMount        MessageType = "mount"
 	MsgShutdown     MessageType = "shutdown"
 	MsgGetHealth    MessageType = "get_health"
+	MsgSetConfig    MessageType = "set_config"
 
 	// Guest -> Host messages
 	MsgPong      MessageType = "pong"
@@ -111,4 +112,10 @@ type HealthPayload struct {
 	State  LifecycleState       `json:"state"`
 	Agents []AgentStatusPayload `json:"agents,omitempty"`
 	Uptime int64                `json:"uptime_seconds"`
+}
+
+// ConfigPayload is the payload for set_config messages.
+type ConfigPayload struct {
+	// Content is the raw jcard.toml content to write inside the guest.
+	Content string `json:"content"`
 }
