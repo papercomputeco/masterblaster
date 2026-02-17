@@ -2,7 +2,7 @@
 
 Create, manage, orchestrate sandboxed Linux VMs for AI agents.
 
-<img width="1108" height="540" alt="Screenshot 2026-02-03 at 10 09 29 PM" src="https://github.com/user-attachments/assets/51d2de95-e5eb-41bf-b434-ace7f109af44" />
+<img width="1108" height="540" alt="Screenshot 2026-02-03 at 10 09 29 PM" src="./mb-splash.png" />
 
 ## Quick start
 
