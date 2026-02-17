@@ -13,6 +13,11 @@ type Backend interface {
 	// stereosd to become ready, injects secrets, and mounts shared directories.
 	Up(ctx context.Context, inst *Instance) error
 
+	// Start re-boots an existing stopped sandbox. The VM directory and disk
+	// must already exist from a previous Up call. It allocates new ports,
+	// starts the hypervisor, and runs post-boot provisioning.
+	Start(ctx context.Context, inst *Instance) error
+
 	// Down gracefully stops the VM. Sends shutdown via vsock to stereosd first,
 	// then falls back to ACPI shutdown via QMP, then force kill after timeout.
 	Down(ctx context.Context, inst *Instance, timeout time.Duration) error

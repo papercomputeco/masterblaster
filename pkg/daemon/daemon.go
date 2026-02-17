@@ -203,19 +203,69 @@ func (d *Daemon) handleUp(ctx context.Context, req *Request) Response {
 		name = cfg.Name
 	}
 
+	// Check if a sandbox with this name already exists
 	d.mu.RLock()
-	if _, exists := d.vms[name]; exists {
-		d.mu.RUnlock()
-		return Response{Error: fmt.Sprintf("sandbox %q already exists", name)}
-	}
+	existing, exists := d.vms[name]
 	d.mu.RUnlock()
 
+	if exists {
+		state, _ := d.backend.Status(ctx, existing)
+
+		switch state {
+		case vm.StateRunning:
+			// Already running -- idempotent no-op
+			existing.VMState = state
+			d.logger.Printf("sandbox %q is already running", name)
+			return Response{
+				OK:        true,
+				Sandboxes: []SandboxInfo{instanceToInfo(existing)},
+			}
+
+		default:
+			// Stopped -- re-boot the existing sandbox with its disk
+			existing.Config = cfg
+			if err := d.backend.Start(ctx, existing); err != nil {
+				// If QEMU started but post-boot failed, mark as running
+				// so the user can debug or retry.
+				if existing.PID > 0 {
+					d.mu.Lock()
+					existing.VMState = vm.StateRunning
+					d.mu.Unlock()
+					d.logger.Printf("sandbox %q partially re-started (QEMU running, post-boot failed): %v", name, err)
+				}
+				return Response{Error: fmt.Sprintf("starting sandbox: %v", err)}
+			}
+
+			d.mu.Lock()
+			existing.VMState = vm.StateRunning
+			d.mu.Unlock()
+
+			d.logger.Printf("sandbox %q re-started", name)
+			return Response{
+				OK:        true,
+				Sandboxes: []SandboxInfo{instanceToInfo(existing)},
+			}
+		}
+	}
+
+	// New sandbox -- create from scratch
 	inst := &vm.Instance{
 		Name:   name,
 		Config: cfg,
 	}
 
 	if err := d.backend.Up(ctx, inst); err != nil {
+		// If QEMU started (PID > 0) but post-boot provisioning failed,
+		// register the instance so the user can debug with `mb ssh`,
+		// retry with `mb up`, or clean up with `mb destroy`. Without
+		// this, the daemon loses track of the running QEMU process.
+		if inst.PID > 0 {
+			inst.VMState = vm.StateRunning
+			d.mu.Lock()
+			d.vms[name] = inst
+			d.mu.Unlock()
+			d.logger.Printf("sandbox %q partially started (QEMU running, post-boot failed): %v", name, err)
+		}
 		return Response{Error: fmt.Sprintf("starting sandbox: %v", err)}
 	}
 
@@ -309,14 +359,18 @@ func (d *Daemon) handleList(ctx context.Context) Response {
 	return Response{OK: true, Sandboxes: infos}
 }
 
-// resolveInstance finds an instance by name, or if no name is given and
-// there's exactly one running sandbox, returns that one.
+// resolveInstance finds an instance by name. If no name is given, it looks
+// for a single sandbox (in any state) and returns it. When multiple sandboxes
+// exist and no name is provided, it returns an error listing the options.
 func (d *Daemon) resolveInstance(ctx context.Context, name string) (*vm.Instance, error) {
 	if name != "" {
 		d.mu.RLock()
 		inst, ok := d.vms[name]
 		d.mu.RUnlock()
 		if ok {
+			// Refresh state from the backend
+			state, _ := d.backend.Status(ctx, inst)
+			inst.VMState = state
 			return inst, nil
 		}
 		// Try loading from disk
@@ -324,33 +378,32 @@ func (d *Daemon) resolveInstance(ctx context.Context, name string) (*vm.Instance
 		if err != nil {
 			return nil, fmt.Errorf("sandbox %q not found: %w", name, err)
 		}
+		state, _ := d.backend.Status(ctx, inst)
+		inst.VMState = state
 		return inst, nil
 	}
 
-	// No name: find the single running VM
+	// No name: find a single sandbox (any state).
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	var running []*vm.Instance
-	for _, inst := range d.vms {
-		state, _ := d.backend.Status(ctx, inst)
-		if state == vm.StateRunning {
-			running = append(running, inst)
+	if len(d.vms) == 0 {
+		return nil, fmt.Errorf("no sandboxes found")
+	}
+
+	if len(d.vms) == 1 {
+		for _, inst := range d.vms {
+			state, _ := d.backend.Status(ctx, inst)
+			inst.VMState = state
+			return inst, nil
 		}
 	}
 
-	switch len(running) {
-	case 0:
-		return nil, fmt.Errorf("no running sandboxes found")
-	case 1:
-		return running[0], nil
-	default:
-		names := make([]string, len(running))
-		for i, inst := range running {
-			names[i] = inst.Name
-		}
-		return nil, fmt.Errorf("multiple running sandboxes, please specify one: %v", names)
+	names := make([]string, 0, len(d.vms))
+	for n := range d.vms {
+		names = append(names, n)
 	}
+	return nil, fmt.Errorf("multiple sandboxes exist, please specify one: %v", names)
 }
 
 func instanceToInfo(inst *vm.Instance) SandboxInfo {

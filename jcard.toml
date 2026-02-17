@@ -1,1 +1,5 @@
 mixtape = "test"
+
+[agent]
+harness = "opencode"
+prompt = "Hello world!"
