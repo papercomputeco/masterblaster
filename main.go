@@ -15,6 +15,7 @@ import (
 	sshcmder "github.com/papercomputeco/masterblaster/cmd/ssh"
 	statuscmder "github.com/papercomputeco/masterblaster/cmd/status"
 	upcmder "github.com/papercomputeco/masterblaster/cmd/up"
+	versioncmder "github.com/papercomputeco/masterblaster/cmd/version"
 	"github.com/papercomputeco/masterblaster/pkg/mbconfig"
 )
 
@@ -51,16 +52,13 @@ func NewMbCmd() *cobra.Command {
 	cmd.AddCommand(sshcmder.NewSSHCmd(mbconfig.ConfigDir, mbconfig.Verbose))
 	cmd.AddCommand(listcmder.NewListCmd(mbconfig.ConfigDir))
 	cmd.AddCommand(mixtapescmder.NewMixtapesCmd(mbconfig.ConfigDir))
+	cmd.AddCommand(versioncmder.NewVersionCmd())
 
 	return cmd
 }
 
-// version is set by the linker via -ldflags "-X main.version=..."
-var version = "dev"
-
 func main() {
 	cmd := NewMbCmd()
-	cmd.Version = version
 
 	err := cmd.Execute()
 	if err != nil {
