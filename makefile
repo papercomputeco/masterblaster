@@ -52,6 +52,16 @@ release: ## Builds and releases mb artifacts
 			--access-key-id=env://BUCKET_ACCESS_KEY_ID \
 			--secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
 
+.PHONY: nightly
+nightly: ## Builds and releases mb artifacts with the nightly tag
+	dagger call \
+		release-nightly \
+			--commit=${COMMIT} \
+			--endpoint=env://BUCKET_ENDPOINT \
+			--bucket=env://BUCKET_NAME \
+			--access-key-id=env://BUCKET_ACCESS_KEY_ID \
+			--secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
+
 check:
 	dagger check
 

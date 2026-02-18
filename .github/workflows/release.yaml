@@ -43,23 +43,12 @@ jobs:
 
       - name: Upload artifacts to release
         run: |
-          mkdir -p dist
-          for file in $(find build -type f); do
-            rel_path="${file#build/}"
-            os=$(dirname "$rel_path" | cut -d'/' -f1)
-            arch=$(dirname "$rel_path" | cut -d'/' -f2)
-            filename=$(basename "$file")
-
-            if [[ "$filename" == *.sha256 ]]; then
-              base="${filename%.sha256}"
-              new_name="${base}-${os}-${arch}.sha256"
-            else
-              new_name="${filename}-${os}-${arch}"
-            fi
-
-            cp "$file" "dist/$new_name"
-          done
-
-          gh release upload "${{ github.event.release.tag_name }}" dist/*
+          dagger call \
+              --token=env:GH_TOKEN \
+              --repo=papercompute/masterblaster \ 
+            flatten \
+              --build=./build
+            upload \
+              --tag="${{ github.event.release.tag_name }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
