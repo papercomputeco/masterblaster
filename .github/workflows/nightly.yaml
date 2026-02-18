@@ -94,10 +94,10 @@ jobs:
             Commit: ${{ github.sha }}
 
             **Download:**
-            - Linux AMD64: `curl -LO https://download.tapes.dev/nightly/linux/amd64/tapes`
-            - Linux ARM64: `curl -LO https://download.tapes.dev/nightly/linux/arm64/tapes`
-            - macOS AMD64: `curl -LO https://download.tapes.dev/nightly/darwin/amd64/tapes`
-            - macOS ARM64: `curl -LO https://download.tapes.dev/nightly/darwin/arm64/tapes`
+            - Linux AMD64: `curl -LO https://masterblaster.stereos.ai/nightly/linux/amd64/mb`
+            - Linux ARM64: `curl -LO https://masterblaster.stereos.ai/nightly/linux/arm64/mb`
+            - macOS AMD64: `curl -LO https://masterblaster.stereos.ai/nightly/darwin/amd64/mb`
+            - macOS ARM64: `curl -LO https://masterblaster.stereos.ai/nightly/darwin/arm64/mb`
           prerelease: true
           allowUpdates: true
           removeArtifacts: true

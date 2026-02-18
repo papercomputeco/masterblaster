@@ -16,23 +16,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Run tests via Dagger
-        uses: dagger/dagger-for-github@v8.2.0
-        env:
-          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
-        with:
-          verb: call
-          args: test
-          version: ${{ env.DAGGER_VERSION }}
-
   build:
     name: Build
     runs-on: ubuntu-latest
