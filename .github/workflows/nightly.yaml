@@ -110,8 +110,9 @@ jobs:
               --token=env:GH_TOKEN \
               --repo=papercompute/masterblaster \
             flatten \
-              --build=./build
+              --build=./build \
             upload \
               --tag="nightly"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
