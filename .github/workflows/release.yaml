@@ -43,7 +43,7 @@ jobs:
 
       - name: Upload artifacts to release
         run: |
-          dagger call \
+          dagger call -m github.com/papercomputeco/daggerverse/ghrelease \
               --token=env:GH_TOKEN \
               --repo=papercompute/masterblaster \ 
             flatten \
