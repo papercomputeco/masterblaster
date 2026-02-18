@@ -21,6 +21,11 @@
       "name": "checksumer",
       "source": "github.com/papercomputeco/daggerverse/checksum@main",
       "pin": "fb6639c78909eaa96dcd3a31faad535fa162b01a"
+    },
+    {
+      "name": "ghrelease",
+      "source": "github.com/papercomputeco/daggerverse/ghrelease@main",
+      "pin": "5b6d08d8437722295b6cff1f51853297bf04a737"
     }
   ],
   "source": ".dagger"

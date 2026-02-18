@@ -29,15 +29,15 @@ func (m *Masterblaster) ReleaseLatest(
 
 	// Bucket secret access key
 	secretAccessKey *dagger.Secret,
-) (string, error) {
+) (*dagger.Directory, error) {
 	artifacts := m.BuildRelease(ctx, version, commit)
 
 	uploader := dag.Bucketuploader(endpoint, bucket, accessKeyId, secretAccessKey)
 	if err := uploader.UploadLatest(ctx, artifacts, version); err != nil {
-		return "", fmt.Errorf("failed to upload latest release: %w", err)
+		return nil, fmt.Errorf("failed to upload latest release: %w", err)
 	}
 
-	return fmt.Sprintf("released %s and updated latest", version), nil
+	return artifacts, nil
 }
 
 // ReleaseNightly builds nightly release binaries and uploads them to the
@@ -59,15 +59,15 @@ func (m *Masterblaster) ReleaseNightly(
 
 	// Bucket secret access key
 	secretAccessKey *dagger.Secret,
-) (string, error) {
+) (*dagger.Directory, error) {
 	artifacts := m.BuildRelease(ctx, "nightly", commit)
 
 	uploader := dag.Bucketuploader(endpoint, bucket, accessKeyId, secretAccessKey)
 	if err := uploader.UploadNightly(ctx, artifacts); err != nil {
-		return "", fmt.Errorf("failed to upload nightly release: %w", err)
+		return nil, fmt.Errorf("failed to upload nightly release: %w", err)
 	}
 
-	return "released nightly", nil
+	return artifacts, nil
 }
 
 // UploadInstallScript uploads the install.sh script to the root of the bucket.
