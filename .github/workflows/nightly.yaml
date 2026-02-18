@@ -108,7 +108,7 @@ jobs:
         run: |
           dagger call -m github.com/papercomputeco/daggerverse/ghrelease \
               --token=env:GH_TOKEN \
-              --repo=papercompute/masterblaster \
+              --repo=papercomputeco/masterblaster \
               --assets=./build \
             with-flatten \
             with-tag --tag "nightly" \
