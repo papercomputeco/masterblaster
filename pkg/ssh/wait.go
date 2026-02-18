@@ -15,7 +15,7 @@ func WaitForSSH(address string, timeoutSeconds int) error {
 	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", address, 3*time.Second)
 		if err == nil {
-			conn.Close()
+			_ = conn.Close()
 			return nil
 		}
 		time.Sleep(interval)

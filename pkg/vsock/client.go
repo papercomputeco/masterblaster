@@ -77,11 +77,11 @@ func (c *Client) send(ctx context.Context, env *Envelope) (*Envelope, error) {
 
 	// Set deadline from context
 	if deadline, ok := ctx.Deadline(); ok {
-		c.conn.SetDeadline(deadline)
+		_ = c.conn.SetDeadline(deadline)
 	} else {
-		c.conn.SetDeadline(time.Now().Add(DefaultTimeout))
+		_ = c.conn.SetDeadline(time.Now().Add(DefaultTimeout))
 	}
-	defer c.conn.SetDeadline(time.Time{})
+	defer func() { _ = c.conn.SetDeadline(time.Time{}) }()
 
 	// Send the message as a single JSON line
 	if err := c.enc.Encode(env); err != nil {

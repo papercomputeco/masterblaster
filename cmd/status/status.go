@@ -66,9 +66,9 @@ func printSandboxes(sandboxes []daemon.SandboxInfo) {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSTATE\tMIXTAPE\tCPUs\tMEMORY\tSSH")
+	_, _ = fmt.Fprintln(w, "NAME\tSTATE\tMIXTAPE\tCPUs\tMEMORY\tSSH")
 	for _, sb := range sandboxes {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
 			sb.Name,
 			sb.State,
 			sb.Mixtape,
@@ -77,5 +77,5 @@ func printSandboxes(sandboxes []daemon.SandboxInfo) {
 			sb.SSHAddress,
 		)
 	}
-	w.Flush()
+	_ = w.Flush()
 }

@@ -80,7 +80,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
 		return fmt.Errorf("writing PID file: %w", err)
 	}
-	defer os.Remove(pidPath)
+	defer func() { _ = os.Remove(pidPath) }()
 
 	// Open unix socket
 	listener, err := net.Listen("unix", sockPath)
@@ -89,8 +89,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	d.listener = listener
 	defer func() {
-		listener.Close()
-		os.Remove(sockPath)
+		_ = listener.Close()
+		_ = os.Remove(sockPath)
 	}()
 
 	// Load existing VMs into memory
@@ -146,19 +146,19 @@ func (d *Daemon) loadExistingVMs(ctx context.Context) {
 
 // handleConnection processes a single CLI RPC connection.
 func (d *Daemon) handleConnection(ctx context.Context, conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	dec := json.NewDecoder(conn)
 	enc := json.NewEncoder(conn)
 
 	var req Request
 	if err := dec.Decode(&req); err != nil {
-		enc.Encode(Response{Error: fmt.Sprintf("invalid request: %v", err)})
+		_ = enc.Encode(Response{Error: fmt.Sprintf("invalid request: %v", err)})
 		return
 	}
 
 	resp := d.handleRequest(ctx, &req)
-	enc.Encode(resp)
+	_ = enc.Encode(resp)
 }
 
 // handleRequest dispatches an RPC request to the appropriate handler.
@@ -434,7 +434,7 @@ func IsRunning(baseDir string) bool {
 	if err != nil {
 		return false
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	enc := json.NewEncoder(conn)
 	dec := json.NewDecoder(conn)

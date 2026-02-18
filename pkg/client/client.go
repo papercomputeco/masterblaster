@@ -29,10 +29,10 @@ func (c *Client) call(req *daemon.Request) (*daemon.Response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connecting to daemon at %s: %w\n\nIs the daemon running? Start it with: mb serve", c.socketPath, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Set a generous timeout for operations that may take a while
-	conn.SetDeadline(time.Now().Add(5 * time.Minute))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Minute))
 
 	enc := json.NewEncoder(conn)
 	dec := json.NewDecoder(conn)

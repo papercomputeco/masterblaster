@@ -3,61 +3,78 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"testing"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func TestLoadMinimalConfig(t *testing.T) {
-	dir := t.TempDir()
-	tomlContent := `
+var _ = Describe("Config", func() {
+
+	Describe("Load", func() {
+
+		Context("with a minimal config", func() {
+			var cfg *JcardConfig
+
+			BeforeEach(func() {
+				dir := GinkgoT().TempDir()
+				tomlContent := `
 mixtape = "base"
 `
-	cfgPath := filepath.Join(dir, "jcard.toml")
-	if err := os.WriteFile(cfgPath, []byte(tomlContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+				cfgPath := filepath.Join(dir, "jcard.toml")
+				Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
 
-	cfg, err := Load(cfgPath)
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
+				var err error
+				cfg, err = Load(cfgPath)
+				Expect(err).NotTo(HaveOccurred())
+			})
 
-	if cfg.Mixtape != "base" {
-		t.Errorf("Mixtape = %q, want %q", cfg.Mixtape, "base")
-	}
-	// Check defaults
-	if cfg.Resources.CPUs != 2 {
-		t.Errorf("Resources.CPUs = %d, want 2", cfg.Resources.CPUs)
-	}
-	if cfg.Resources.Memory != "4GiB" {
-		t.Errorf("Resources.Memory = %q, want %q", cfg.Resources.Memory, "4GiB")
-	}
-	if cfg.Resources.Disk != "20GiB" {
-		t.Errorf("Resources.Disk = %q, want %q", cfg.Resources.Disk, "20GiB")
-	}
-	if cfg.Network.Mode != "nat" {
-		t.Errorf("Network.Mode = %q, want %q", cfg.Network.Mode, "nat")
-	}
-	if cfg.Agent.Restart != "no" {
-		t.Errorf("Agent.Restart = %q, want %q", cfg.Agent.Restart, "no")
-	}
-	if cfg.Agent.GracePeriod != "30s" {
-		t.Errorf("Agent.GracePeriod = %q, want %q", cfg.Agent.GracePeriod, "30s")
-	}
-	if cfg.Agent.Workdir != "/workspace" {
-		t.Errorf("Agent.Workdir = %q, want %q", cfg.Agent.Workdir, "/workspace")
-	}
-}
+			It("should parse the mixtape field", func() {
+				Expect(cfg.Mixtape).To(Equal("base"))
+			})
 
-func TestLoadFullConfig(t *testing.T) {
-	dir := t.TempDir()
+			It("should apply default CPUs", func() {
+				Expect(cfg.Resources.CPUs).To(Equal(2))
+			})
 
-	// Create a prompt file
-	promptPath := filepath.Join(dir, "prompt.md")
-	if err := os.WriteFile(promptPath, []byte("fix the tests"), 0644); err != nil {
-		t.Fatal(err)
-	}
+			It("should apply default memory", func() {
+				Expect(cfg.Resources.Memory).To(Equal("4GiB"))
+			})
 
-	tomlContent := `
+			It("should apply default disk", func() {
+				Expect(cfg.Resources.Disk).To(Equal("20GiB"))
+			})
+
+			It("should apply default network mode", func() {
+				Expect(cfg.Network.Mode).To(Equal("nat"))
+			})
+
+			It("should apply default agent restart policy", func() {
+				Expect(cfg.Agent.Restart).To(Equal("no"))
+			})
+
+			It("should apply default agent grace period", func() {
+				Expect(cfg.Agent.GracePeriod).To(Equal("30s"))
+			})
+
+			It("should apply default agent workdir", func() {
+				Expect(cfg.Agent.Workdir).To(Equal("/workspace"))
+			})
+		})
+
+		Context("with a full config", func() {
+			var (
+				cfg *JcardConfig
+				dir string
+			)
+
+			BeforeEach(func() {
+				dir = GinkgoT().TempDir()
+
+				// Create a prompt file
+				promptPath := filepath.Join(dir, "prompt.md")
+				Expect(os.WriteFile(promptPath, []byte("fix the tests"), 0644)).To(Succeed())
+
+				tomlContent := `
 mixtape = "openclaw"
 name = "my-agent"
 
@@ -100,143 +117,94 @@ session = "my-session"
 [agent.env]
 FOO = "bar"
 `
-	cfgPath := filepath.Join(dir, "jcard.toml")
-	if err := os.WriteFile(cfgPath, []byte(tomlContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+				cfgPath := filepath.Join(dir, "jcard.toml")
+				Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
 
-	cfg, err := Load(cfgPath)
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
+				var err error
+				cfg, err = Load(cfgPath)
+				Expect(err).NotTo(HaveOccurred())
+			})
 
-	if cfg.Mixtape != "openclaw" {
-		t.Errorf("Mixtape = %q, want %q", cfg.Mixtape, "openclaw")
-	}
-	if cfg.Name != "my-agent" {
-		t.Errorf("Name = %q, want %q", cfg.Name, "my-agent")
-	}
-	if cfg.Resources.CPUs != 8 {
-		t.Errorf("Resources.CPUs = %d, want 8", cfg.Resources.CPUs)
-	}
-	if cfg.Resources.Memory != "16GiB" {
-		t.Errorf("Resources.Memory = %q, want %q", cfg.Resources.Memory, "16GiB")
-	}
-	if cfg.Resources.Disk != "100GiB" {
-		t.Errorf("Resources.Disk = %q, want %q", cfg.Resources.Disk, "100GiB")
-	}
+			It("should parse the mixtape field", func() {
+				Expect(cfg.Mixtape).To(Equal("openclaw"))
+			})
 
-	// Network
-	if len(cfg.Network.Forwards) != 2 {
-		t.Fatalf("len(Network.Forwards) = %d, want 2", len(cfg.Network.Forwards))
-	}
-	if cfg.Network.Forwards[0].Host != 8080 {
-		t.Errorf("Forwards[0].Host = %d, want 8080", cfg.Network.Forwards[0].Host)
-	}
-	if cfg.Network.Forwards[1].Proto != "udp" {
-		t.Errorf("Forwards[1].Proto = %q, want %q", cfg.Network.Forwards[1].Proto, "udp")
-	}
-	if len(cfg.Network.EgressAllow) != 1 || cfg.Network.EgressAllow[0] != "api.anthropic.com" {
-		t.Errorf("Network.EgressAllow = %v, want [api.anthropic.com]", cfg.Network.EgressAllow)
-	}
+			It("should parse the name field", func() {
+				Expect(cfg.Name).To(Equal("my-agent"))
+			})
 
-	// Shared
-	if len(cfg.Shared) != 2 {
-		t.Fatalf("len(Shared) = %d, want 2", len(cfg.Shared))
-	}
-	if cfg.Shared[0].Guest != "/workspace" {
-		t.Errorf("Shared[0].Guest = %q, want %q", cfg.Shared[0].Guest, "/workspace")
-	}
-	if cfg.Shared[1].ReadOnly != true {
-		t.Error("Shared[1].ReadOnly = false, want true")
-	}
+			It("should parse resources", func() {
+				Expect(cfg.Resources.CPUs).To(Equal(8))
+				Expect(cfg.Resources.Memory).To(Equal("16GiB"))
+				Expect(cfg.Resources.Disk).To(Equal("100GiB"))
+			})
 
-	// Secrets
-	if cfg.Secrets["MY_SECRET"] != "secret-value" {
-		t.Errorf("Secrets[MY_SECRET] = %q, want %q", cfg.Secrets["MY_SECRET"], "secret-value")
-	}
+			It("should parse network forwards", func() {
+				Expect(cfg.Network.Forwards).To(HaveLen(2))
+				Expect(cfg.Network.Forwards[0].Host).To(Equal(8080))
+				Expect(cfg.Network.Forwards[1].Proto).To(Equal("udp"))
+			})
 
-	// Agent
-	if cfg.Agent.Harness != "claude-code" {
-		t.Errorf("Agent.Harness = %q, want %q", cfg.Agent.Harness, "claude-code")
-	}
-	if cfg.Agent.PromptFile != filepath.Join(dir, "prompt.md") {
-		t.Errorf("Agent.PromptFile = %q, want %q", cfg.Agent.PromptFile, filepath.Join(dir, "prompt.md"))
-	}
-	if cfg.Agent.Restart != "on-failure" {
-		t.Errorf("Agent.Restart = %q, want %q", cfg.Agent.Restart, "on-failure")
-	}
-	if cfg.Agent.MaxRestarts != 5 {
-		t.Errorf("Agent.MaxRestarts = %d, want 5", cfg.Agent.MaxRestarts)
-	}
-	if cfg.Agent.Timeout != "2h" {
-		t.Errorf("Agent.Timeout = %q, want %q", cfg.Agent.Timeout, "2h")
-	}
-	if cfg.Agent.GracePeriod != "60s" {
-		t.Errorf("Agent.GracePeriod = %q, want %q", cfg.Agent.GracePeriod, "60s")
-	}
-	if cfg.Agent.Session != "my-session" {
-		t.Errorf("Agent.Session = %q, want %q", cfg.Agent.Session, "my-session")
-	}
-	if cfg.Agent.Env["FOO"] != "bar" {
-		t.Errorf("Agent.Env[FOO] = %q, want %q", cfg.Agent.Env["FOO"], "bar")
-	}
-}
+			It("should parse egress allow list", func() {
+				Expect(cfg.Network.EgressAllow).To(ConsistOf("api.anthropic.com"))
+			})
 
-func TestValidateInvalidNetworkMode(t *testing.T) {
-	dir := t.TempDir()
-	tomlContent := `
+			It("should parse shared mounts", func() {
+				Expect(cfg.Shared).To(HaveLen(2))
+				Expect(cfg.Shared[0].Guest).To(Equal("/workspace"))
+				Expect(cfg.Shared[1].ReadOnly).To(BeTrue())
+			})
+
+			It("should parse secrets", func() {
+				Expect(cfg.Secrets).To(HaveKeyWithValue("MY_SECRET", "secret-value"))
+			})
+
+			It("should parse agent configuration", func() {
+				Expect(cfg.Agent.Harness).To(Equal("claude-code"))
+				Expect(cfg.Agent.PromptFile).To(Equal(filepath.Join(dir, "prompt.md")))
+				Expect(cfg.Agent.Restart).To(Equal("on-failure"))
+				Expect(cfg.Agent.MaxRestarts).To(Equal(5))
+				Expect(cfg.Agent.Timeout).To(Equal("2h"))
+				Expect(cfg.Agent.GracePeriod).To(Equal("60s"))
+				Expect(cfg.Agent.Session).To(Equal("my-session"))
+			})
+
+			It("should parse agent env", func() {
+				Expect(cfg.Agent.Env).To(HaveKeyWithValue("FOO", "bar"))
+			})
+		})
+	})
+
+	Describe("Validation", func() {
+
+		DescribeTable("should reject invalid configs",
+			func(toml string) {
+				dir := GinkgoT().TempDir()
+				cfgPath := filepath.Join(dir, "jcard.toml")
+				Expect(os.WriteFile(cfgPath, []byte(toml), 0644)).To(Succeed())
+
+				_, err := Load(cfgPath)
+				Expect(err).To(HaveOccurred())
+			},
+			Entry("invalid network mode", `
 mixtape = "base"
 
 [network]
 mode = "invalid"
-`
-	cfgPath := filepath.Join(dir, "jcard.toml")
-	os.WriteFile(cfgPath, []byte(tomlContent), 0644)
-
-	_, err := Load(cfgPath)
-	if err == nil {
-		t.Fatal("expected error for invalid network mode, got nil")
-	}
-}
-
-func TestValidateInvalidHarness(t *testing.T) {
-	dir := t.TempDir()
-	tomlContent := `
+`),
+			Entry("invalid harness", `
 mixtape = "base"
 
 [agent]
 harness = "invalid-harness"
-`
-	cfgPath := filepath.Join(dir, "jcard.toml")
-	os.WriteFile(cfgPath, []byte(tomlContent), 0644)
-
-	_, err := Load(cfgPath)
-	if err == nil {
-		t.Fatal("expected error for invalid harness, got nil")
-	}
-}
-
-func TestValidateInvalidRestart(t *testing.T) {
-	dir := t.TempDir()
-	tomlContent := `
+`),
+			Entry("invalid restart policy", `
 mixtape = "base"
 
 [agent]
 restart = "invalid"
-`
-	cfgPath := filepath.Join(dir, "jcard.toml")
-	os.WriteFile(cfgPath, []byte(tomlContent), 0644)
-
-	_, err := Load(cfgPath)
-	if err == nil {
-		t.Fatal("expected error for invalid restart policy, got nil")
-	}
-}
-
-func TestValidateInvalidPortForward(t *testing.T) {
-	dir := t.TempDir()
-	tomlContent := `
+`),
+			Entry("invalid port forward (host port 0)", `
 mixtape = "base"
 
 [network]
@@ -244,92 +212,74 @@ mode = "nat"
 forwards = [
     { host = 0, guest = 80, proto = "tcp" },
 ]
-`
-	cfgPath := filepath.Join(dir, "jcard.toml")
-	os.WriteFile(cfgPath, []byte(tomlContent), 0644)
+`),
+		)
+	})
 
-	_, err := Load(cfgPath)
-	if err == nil {
-		t.Fatal("expected error for invalid port forward, got nil")
-	}
-}
+	Describe("Name defaulting", func() {
+		It("should default the name to the directory name", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `mixtape = "base"`
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
 
-func TestNameDefaultsToDirectoryName(t *testing.T) {
-	dir := t.TempDir()
-	tomlContent := `mixtape = "base"`
-	cfgPath := filepath.Join(dir, "jcard.toml")
-	os.WriteFile(cfgPath, []byte(tomlContent), 0644)
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Name).To(Equal(filepath.Base(dir)))
+		})
+	})
 
-	cfg, err := Load(cfgPath)
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
+	Describe("Environment variable expansion", func() {
+		It("should expand env vars in secrets", func() {
+			Expect(os.Setenv("MB_TEST_KEY", "test-api-key-123")).To(Succeed())
+			DeferCleanup(os.Unsetenv, "MB_TEST_KEY")
 
-	expected := filepath.Base(dir)
-	if cfg.Name != expected {
-		t.Errorf("Name = %q, want %q (directory name)", cfg.Name, expected)
-	}
-}
-
-func TestExpandEnvVarsInSecrets(t *testing.T) {
-	os.Setenv("MB_TEST_KEY", "test-api-key-123")
-	defer os.Unsetenv("MB_TEST_KEY")
-
-	dir := t.TempDir()
-	tomlContent := `
+			dir := GinkgoT().TempDir()
+			tomlContent := `
 mixtape = "base"
 
 [secrets]
 API_KEY = "${MB_TEST_KEY}"
 `
-	cfgPath := filepath.Join(dir, "jcard.toml")
-	os.WriteFile(cfgPath, []byte(tomlContent), 0644)
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
 
-	cfg, err := Load(cfgPath)
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Secrets).To(HaveKeyWithValue("API_KEY", "test-api-key-123"))
+		})
+	})
 
-	if cfg.Secrets["API_KEY"] != "test-api-key-123" {
-		t.Errorf("Secrets[API_KEY] = %q, want %q", cfg.Secrets["API_KEY"], "test-api-key-123")
-	}
-}
+	Describe("DefaultJcardTOML", func() {
+		It("should return non-empty valid TOML", func() {
+			content := DefaultJcardTOML()
+			Expect(content).NotTo(BeEmpty())
 
-func TestDefaultJcardTOML(t *testing.T) {
-	content := DefaultJcardTOML()
-	if content == "" {
-		t.Error("DefaultJcardTOML() returned empty string")
-	}
+			dir := GinkgoT().TempDir()
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(content), 0644)).To(Succeed())
 
-	// Verify it's valid TOML
-	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "jcard.toml")
-	os.WriteFile(cfgPath, []byte(content), 0644)
+			_, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
 
-	_, err := Load(cfgPath)
-	if err != nil {
-		t.Fatalf("DefaultJcardTOML() generated invalid TOML: %v", err)
-	}
-}
-
-func TestWorkdirDefaultsToFirstSharedMount(t *testing.T) {
-	dir := t.TempDir()
-	tomlContent := `
+	Describe("Workdir defaulting", func() {
+		It("should default workdir to the first shared mount guest path", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `
 mixtape = "base"
 
 [[shared]]
 host = "./"
 guest = "/code"
 `
-	cfgPath := filepath.Join(dir, "jcard.toml")
-	os.WriteFile(cfgPath, []byte(tomlContent), 0644)
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
 
-	cfg, err := Load(cfgPath)
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
-
-	if cfg.Agent.Workdir != "/code" {
-		t.Errorf("Agent.Workdir = %q, want %q (first shared mount)", cfg.Agent.Workdir, "/code")
-	}
-}
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Agent.Workdir).To(Equal("/code"))
+		})
+	})
+})

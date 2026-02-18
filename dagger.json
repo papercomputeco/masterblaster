@@ -1,0 +1,27 @@
+{
+  "name": "masterblaster",
+  "engineVersion": "v0.19.10",
+  "sdk": {
+    "source": "go"
+  },
+  "toolchains": [
+    {
+      "name": "golangcilint",
+      "source": "github.com/papercomputeco/daggerverse/golangcilint@main",
+      "pin": "fff3ce429836700cb267704c9d3266e195d3a5fd"
+    }
+  ],
+  "dependencies": [
+    {
+      "name": "bucketuploader",
+      "source": "github.com/papercomputeco/daggerverse/bucketupload@main",
+      "pin": "fb6639c78909eaa96dcd3a31faad535fa162b01a"
+    },
+    {
+      "name": "checksumer",
+      "source": "github.com/papercomputeco/daggerverse/checksum@main",
+      "pin": "fb6639c78909eaa96dcd3a31faad535fa162b01a"
+    }
+  ],
+  "source": ".dagger"
+}

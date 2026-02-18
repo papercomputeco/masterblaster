@@ -14,8 +14,13 @@ LDFLAGS := -s -w \
 	-X 'github.com/papercomputeco/masterblaster/pkg/utils.Buildtime=$(BUILDTIME)'
 
 .PHONY: build
-build: ## Builds binary
-	go build -ldflags "$(LDFLAGS)" -o ./build/$(BIN_NAME) .
+build: ## Builds all cross-platform release artifacts via Dagger
+	dagger call \
+		build-release \
+			--version $(VERSION) \
+			--commit $(COMMIT) \
+		export \
+			--path ./build
 
 .PHONY: build-local
 build-local: ## Builds local artifacts with local toolchain
@@ -27,8 +32,28 @@ install: build-local ## Builds local artifacts and installs to configured GOBIN
 	$(call print-target)
 	cp ./build/$(BIN_NAME) $(shell go env GOBIN)
 
-test:
-	go test ./...
+.PHONY: upload-install-script
+upload-install-script: ## Uploads the install script
+	dagger call \
+		upload-install-sh \
+			--endpoint=env://BUCKET_ENDPOINT \
+			--bucket=env://BUCKET_NAME \
+			--access-key-id=env://BUCKET_ACCESS_KEY_ID \
+			--secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
+
+.PHONY: release
+release: ## Builds and releases mb artifacts
+	dagger call \
+		release-latest \
+			--version=${VERSION} \
+			--commit=${COMMIT} \
+			--endpoint=env://BUCKET_ENDPOINT \
+			--bucket=env://BUCKET_NAME \
+			--access-key-id=env://BUCKET_ACCESS_KEY_ID \
+			--secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
+
+check:
+	dagger check
 
 fmt:
 	go fmt ./...
