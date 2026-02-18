@@ -109,10 +109,10 @@ jobs:
           dagger call -m github.com/papercomputeco/daggerverse/ghrelease \
               --token=env:GH_TOKEN \
               --repo=papercompute/masterblaster \
-            flatten \
-              --build=./build \
-            upload \
-              --tag="nightly"
+              --assets=./build \
+            with-flatten \
+            with-tag --tag "nightly" \
+            upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}

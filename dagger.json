@@ -25,7 +25,7 @@
     {
       "name": "ghrelease",
       "source": "github.com/papercomputeco/daggerverse/ghrelease@main",
-      "pin": "5b6d08d8437722295b6cff1f51853297bf04a737"
+      "pin": "b3469bf3e3d2ec5584b4ec62b33b0dc6243ae5c2"
     }
   ],
   "source": ".dagger"
