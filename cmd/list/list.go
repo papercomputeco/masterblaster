@@ -51,17 +51,17 @@ func runList(baseDir string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSTATE\tMIXTAPE\tCPUs\tMEMORY\tSSH")
+	_, _ = fmt.Fprintln(w, "NAME\tSTATE\tMIXTAPE\tCPUs\tMEMORY\tSSH")
 	for _, sb := range resp.Sandboxes {
 		printSandboxRow(w, sb)
 	}
-	w.Flush()
+	_ = w.Flush()
 
 	return nil
 }
 
 func printSandboxRow(w *tabwriter.Writer, sb daemon.SandboxInfo) {
-	fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
+	_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
 		sb.Name,
 		sb.State,
 		sb.Mixtape,

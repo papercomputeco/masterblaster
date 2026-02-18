@@ -32,13 +32,13 @@ func DialQMP(socketPath string) (*QMPClient, error) {
 	// Read server greeting
 	var greeting map[string]interface{}
 	if err := c.dec.Decode(&greeting); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("reading QMP greeting: %w", err)
 	}
 
 	// Enter command mode
 	if err := c.execute("qmp_capabilities", nil); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("QMP capabilities negotiation: %w", err)
 	}
 

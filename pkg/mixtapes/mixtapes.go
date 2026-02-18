@@ -118,11 +118,11 @@ func PrintList(mixtapes []MixtapeInfo) {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tSIZE")
+	_, _ = fmt.Fprintln(w, "NAME\tSIZE")
 	for _, m := range mixtapes {
-		fmt.Fprintf(w, "%s\t%s\n", m.Name, formatSize(m.Size))
+		_, _ = fmt.Fprintf(w, "%s\t%s\n", m.Name, formatSize(m.Size))
 	}
-	w.Flush()
+	_ = w.Flush()
 }
 
 func formatSize(bytes int64) string {

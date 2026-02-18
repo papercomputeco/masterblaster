@@ -60,30 +60,30 @@ func (q *QEMUBackend) Up(ctx context.Context, inst *Instance) error {
 	if strings.HasSuffix(imagePath, ".qcow2") {
 		// Create qcow2 overlay backed by base image
 		if err := createQCOWOverlay(imagePath, inst.QCOWDiskPath(), convertSizeForQEMU(cfg.Resources.Disk)); err != nil {
-			os.RemoveAll(vmDir)
+			_ = os.RemoveAll(vmDir)
 			return fmt.Errorf("creating disk overlay: %w", err)
 		}
 	} else {
 		// Raw image: copy and resize
 		if err := copyRawImage(imagePath, inst.DiskPath()); err != nil {
-			os.RemoveAll(vmDir)
+			_ = os.RemoveAll(vmDir)
 			return fmt.Errorf("copying disk image: %w", err)
 		}
 		if err := resizeRawImage(inst.DiskPath(), convertSizeForQEMU(cfg.Resources.Disk)); err != nil {
-			os.RemoveAll(vmDir)
+			_ = os.RemoveAll(vmDir)
 			return fmt.Errorf("resizing disk image: %w", err)
 		}
 	}
 
 	// Initialize writable EFI vars
 	if err := initEFIVars(inst.EFIVarsPath()); err != nil {
-		os.RemoveAll(vmDir)
+		_ = os.RemoveAll(vmDir)
 		return fmt.Errorf("initializing EFI vars: %w", err)
 	}
 
 	// Save jcard.toml into the VM directory for reference
 	if err := saveJcard(vmDir, cfg); err != nil {
-		os.RemoveAll(vmDir)
+		_ = os.RemoveAll(vmDir)
 		return fmt.Errorf("saving jcard config: %w", err)
 	}
 
@@ -92,7 +92,7 @@ func (q *QEMUBackend) Up(ctx context.Context, inst *Instance) error {
 		// If QEMU hasn't started yet, clean up the VM dir.
 		// If it has (post-boot failure), leave it for debugging.
 		if inst.PID == 0 {
-			os.RemoveAll(vmDir)
+			_ = os.RemoveAll(vmDir)
 		}
 		return err
 	}
@@ -125,8 +125,8 @@ func (q *QEMUBackend) Start(ctx context.Context, inst *Instance) error {
 	}
 
 	// Clean up stale runtime files from the previous run
-	os.Remove(inst.QMPSocket)
-	os.Remove(inst.PIDFilePath())
+	_ = os.Remove(inst.QMPSocket)
+	_ = os.Remove(inst.PIDFilePath())
 
 	// Boot: allocate ports, start QEMU, post-boot provisioning
 	return q.boot(ctx, inst, cfg)
@@ -206,7 +206,7 @@ func (q *QEMUBackend) Down(ctx context.Context, inst *Instance, timeout time.Dur
 	if err != nil {
 		return q.ForceDown(ctx, inst)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if err := client.Shutdown(); err != nil {
 		return q.ForceDown(ctx, inst)
@@ -301,7 +301,7 @@ func (q *QEMUBackend) Status(_ context.Context, inst *Instance) (State, error) {
 	if err != nil {
 		return StateRunning, nil
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	status, err := client.QueryStatus()
 	if err != nil {
@@ -548,7 +548,7 @@ func (q *QEMUBackend) postBoot(ctx context.Context, inst *Instance, cfg *config.
 	if client == nil {
 		return fmt.Errorf("could not connect to stereosd via %s after 120s: %w", transport, err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// Wait for ready state
 	readyCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -592,7 +592,7 @@ func (q *QEMUBackend) controlPlaneShutdown(ctx context.Context, inst *Instance) 
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	return client.Shutdown(ctx, "mb down")
 }
 
@@ -664,7 +664,7 @@ func initEFIVars(path string) error {
 	if err != nil {
 		return fmt.Errorf("creating EFI vars file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := f.Truncate(size); err != nil {
 		return fmt.Errorf("sizing EFI vars file: %w", err)
 	}
@@ -691,7 +691,7 @@ func allocatePort() (int, error) {
 		return 0, fmt.Errorf("finding free port: %w", err)
 	}
 	port := l.Addr().(*net.TCPAddr).Port
-	l.Close()
+	_ = l.Close()
 	return port, nil
 }
 
