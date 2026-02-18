@@ -48,7 +48,7 @@ jobs:
               --repo=papercomputeco/masterblaster \
               --assets=./build \
             with-flatten \
-            with-tag --tag="${{ github.event.release.tag_name }}"
+            with-tag --tag="${{ github.event.release.tag_name }}" \
             upload
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
