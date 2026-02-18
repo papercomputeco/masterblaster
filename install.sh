@@ -9,7 +9,7 @@
 set -e
 
 VERSION="${MB_VERSION:-latest}"
-BASE_URL="https://masterblaster.stereos.ai"
+BASE_URL="https://mb.stereos.ai"
 
 # Detect OS
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -39,4 +39,4 @@ echo "Installing to $INSTALL_DIR ..."
 sudo mv /tmp/mb "$INSTALL_DIR/mb"
 
 echo "Installed mb version:"
-tapes version
+mb version
