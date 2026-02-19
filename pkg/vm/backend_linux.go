@@ -20,6 +20,9 @@ func NewPlatformBackend(baseDir string) (Backend, error) {
 		},
 		ControlPlaneMode: "vsock",
 		VsockDevice:      "vhost-vsock-pci",
+		DirectKernelBoot: true,
+		DiskAIO:          "io_uring",
+		DiskCache:        "none",
 	}
 
 	return NewQEMUBackend(baseDir, platform), nil

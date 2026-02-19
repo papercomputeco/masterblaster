@@ -45,6 +45,23 @@ type QEMUPlatformConfig struct {
 	// Only used when ControlPlaneMode is "vsock".
 	// Typically "vhost-vsock-pci" on x86 and "vhost-vsock-device" on ARM.
 	VsockDevice string
+
+	// DirectKernelBoot enables -kernel/-initrd/-append boot, bypassing
+	// EFI firmware and GRUB. Requires kernel artifacts (bzImage, initrd,
+	// cmdline) in the mixtape directory. When enabled and kernel artifacts
+	// are available, EFI pflash drives and EFI vars initialization are
+	// skipped entirely. Falls back to EFI boot if artifacts are missing.
+	DirectKernelBoot bool
+
+	// DiskAIO is the async I/O backend for QEMU disk drives.
+	// Set to "io_uring" on Linux 5.1+ for best performance, or leave
+	// empty to use QEMU's default (threads). Not supported on macOS.
+	DiskAIO string
+
+	// DiskCache is the cache mode for QEMU disk drives.
+	// Set to "none" (O_DIRECT) when using io_uring for best performance,
+	// or leave empty to use QEMU's default (writeback).
+	DiskCache string
 }
 
 // DefaultMachineType returns the machine type, defaulting to "virt".

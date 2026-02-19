@@ -23,6 +23,9 @@ func NewPlatformBackend(baseDir string) (Backend, error) {
 			"/opt/homebrew/share/qemu/edk2-aarch64-code.fd",
 		},
 		ControlPlaneMode: "tcp",
+		DirectKernelBoot: true,
+		// DiskAIO and DiskCache left empty: io_uring is Linux-only,
+		// macOS uses QEMU's default posix_aio/threads backend.
 	}
 
 	return NewQEMUBackend(baseDir, platform), nil

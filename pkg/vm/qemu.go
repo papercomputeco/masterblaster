@@ -56,6 +56,12 @@ func (q *QEMUBackend) Up(ctx context.Context, inst *Instance) error {
 	}
 	inst.Dir = vmDir
 
+	// Resolve kernel artifacts for direct kernel boot (if available)
+	var kernelArtifacts *KernelArtifacts
+	if q.platform.DirectKernelBoot {
+		kernelArtifacts = ResolveKernelArtifacts(q.baseDir, cfg.Mixtape)
+	}
+
 	// Determine image format and create disk
 	if strings.HasSuffix(imagePath, ".qcow2") {
 		// Create qcow2 overlay backed by base image
@@ -75,10 +81,13 @@ func (q *QEMUBackend) Up(ctx context.Context, inst *Instance) error {
 		}
 	}
 
-	// Initialize writable EFI vars
-	if err := initEFIVars(inst.EFIVarsPath()); err != nil {
-		_ = os.RemoveAll(vmDir)
-		return fmt.Errorf("initializing EFI vars: %w", err)
+	// Initialize writable EFI vars — only needed for EFI boot (skipped
+	// when direct kernel boot artifacts are available).
+	if kernelArtifacts == nil {
+		if err := initEFIVars(inst.EFIVarsPath()); err != nil {
+			_ = os.RemoveAll(vmDir)
+			return fmt.Errorf("initializing EFI vars: %w", err)
+		}
 	}
 
 	// Save jcard.toml into the VM directory for reference
@@ -88,7 +97,7 @@ func (q *QEMUBackend) Up(ctx context.Context, inst *Instance) error {
 	}
 
 	// Boot: allocate ports, start QEMU, post-boot provisioning
-	if err := q.boot(ctx, inst, cfg); err != nil {
+	if err := q.boot(ctx, inst, cfg, kernelArtifacts); err != nil {
 		// If QEMU hasn't started yet, clean up the VM dir.
 		// If it has (post-boot failure), leave it for debugging.
 		if inst.PID == 0 {
@@ -128,15 +137,23 @@ func (q *QEMUBackend) Start(ctx context.Context, inst *Instance) error {
 	_ = os.Remove(inst.QMPSocket)
 	_ = os.Remove(inst.PIDFilePath())
 
+	// Resolve kernel artifacts for direct kernel boot (if available)
+	var kernelArtifacts *KernelArtifacts
+	if q.platform.DirectKernelBoot {
+		kernelArtifacts = ResolveKernelArtifacts(q.baseDir, cfg.Mixtape)
+	}
+
 	// Boot: allocate ports, start QEMU, post-boot provisioning
-	return q.boot(ctx, inst, cfg)
+	return q.boot(ctx, inst, cfg, kernelArtifacts)
 }
 
 // boot is the shared boot sequence used by both Up (new sandbox) and
 // Start (re-boot existing). It allocates ports, updates state.json,
 // starts QEMU, and runs post-boot provisioning (stereosd handshake,
 // secret injection, shared directory mounting).
-func (q *QEMUBackend) boot(ctx context.Context, inst *Instance, cfg *config.JcardConfig) error {
+//
+// kernelArtifacts may be nil, in which case QEMU boots via EFI firmware.
+func (q *QEMUBackend) boot(ctx context.Context, inst *Instance, cfg *config.JcardConfig, kernelArtifacts *KernelArtifacts) error {
 	// Allocate ports
 	sshPort, err := allocatePort()
 	if err != nil {
@@ -174,7 +191,7 @@ func (q *QEMUBackend) boot(ctx context.Context, inst *Instance, cfg *config.Jcar
 	}
 
 	// Build and start QEMU
-	if err := q.startQEMU(ctx, inst, cfg); err != nil {
+	if err := q.startQEMU(ctx, inst, cfg, kernelArtifacts); err != nil {
 		return fmt.Errorf("starting QEMU: %w", err)
 	}
 
@@ -374,13 +391,13 @@ func (q *QEMUBackend) LoadInstance(name string) (*Instance, error) {
 }
 
 // startQEMU launches the QEMU system emulator as a daemon.
-func (q *QEMUBackend) startQEMU(ctx context.Context, inst *Instance, cfg *config.JcardConfig) error {
+func (q *QEMUBackend) startQEMU(ctx context.Context, inst *Instance, cfg *config.JcardConfig, kernelArtifacts *KernelArtifacts) error {
 	qemuBin, err := exec.LookPath(q.platform.Binary)
 	if err != nil {
 		return fmt.Errorf("%s not found: %w\nInstall QEMU: brew install qemu", q.platform.Binary, err)
 	}
 
-	args, err := q.buildArgs(inst, cfg)
+	args, err := q.buildArgs(inst, cfg, kernelArtifacts)
 	if err != nil {
 		return fmt.Errorf("building QEMU args: %w", err)
 	}
@@ -409,19 +426,28 @@ func (q *QEMUBackend) startQEMU(ctx context.Context, inst *Instance, cfg *config
 }
 
 // buildArgs constructs the QEMU command line arguments using platform config.
-func (q *QEMUBackend) buildArgs(inst *Instance, cfg *config.JcardConfig) ([]string, error) {
-	efiCode, err := q.findEFIFirmware()
-	if err != nil {
-		return nil, err
+// When kernelArtifacts is non-nil, direct kernel boot is used (bypassing
+// EFI firmware and GRUB). Otherwise, EFI pflash boot is used.
+func (q *QEMUBackend) buildArgs(inst *Instance, cfg *config.JcardConfig, kernelArtifacts *KernelArtifacts) ([]string, error) {
+	// Determine disk format and path
+	var diskFormat, diskPath string
+	if _, err := os.Stat(inst.QCOWDiskPath()); err == nil {
+		diskFormat = "qcow2"
+		diskPath = inst.QCOWDiskPath()
+	} else {
+		diskFormat = "raw"
+		diskPath = inst.DiskPath()
 	}
 
-	// Determine disk format and path
-	diskArg := ""
-	if _, err := os.Stat(inst.QCOWDiskPath()); err == nil {
-		diskArg = fmt.Sprintf("if=virtio,format=qcow2,file=%s", inst.QCOWDiskPath())
-	} else {
-		diskArg = fmt.Sprintf("if=virtio,format=raw,file=%s", inst.DiskPath())
+	// Build the disk drive argument with optional AIO and cache settings
+	diskArg := fmt.Sprintf("if=virtio,format=%s,file=%s", diskFormat, diskPath)
+	if q.platform.DiskAIO != "" {
+		diskArg += ",aio=" + q.platform.DiskAIO
 	}
+	if q.platform.DiskCache != "" {
+		diskArg += ",cache=" + q.platform.DiskCache
+	}
+	diskArg += ",discard=unmap"
 
 	// Parse memory for QEMU (convert GiB -> G, MiB -> M, etc.)
 	memory := convertSizeForQEMU(cfg.Resources.Memory)
@@ -438,11 +464,30 @@ func (q *QEMUBackend) buildArgs(inst *Instance, cfg *config.JcardConfig) ([]stri
 		// Resources
 		"-smp", fmt.Sprintf("%d", cfg.Resources.CPUs),
 		"-m", memory,
+	}
 
-		// EFI firmware (read-only pflash for code, writable copy for vars)
-		"-drive", fmt.Sprintf("if=pflash,format=raw,file=%s,readonly=on", efiCode),
-		"-drive", fmt.Sprintf("if=pflash,format=raw,file=%s", inst.EFIVarsPath()),
+	// Boot method: direct kernel boot or EFI firmware
+	if kernelArtifacts != nil {
+		// Direct kernel boot — skip EFI firmware entirely.
+		// This eliminates OVMF init (~1-2s) and GRUB (~0.5-1s).
+		args = append(args,
+			"-kernel", kernelArtifacts.Kernel,
+			"-initrd", kernelArtifacts.Initrd,
+			"-append", kernelArtifacts.Cmdline,
+		)
+	} else {
+		// EFI firmware boot (fallback when kernel artifacts unavailable)
+		efiCode, err := q.findEFIFirmware()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args,
+			"-drive", fmt.Sprintf("if=pflash,format=raw,file=%s,readonly=on", efiCode),
+			"-drive", fmt.Sprintf("if=pflash,format=raw,file=%s", inst.EFIVarsPath()),
+		)
+	}
 
+	args = append(args,
 		// Boot disk
 		"-drive", diskArg,
 
@@ -452,16 +497,17 @@ func (q *QEMUBackend) buildArgs(inst *Instance, cfg *config.JcardConfig) ([]stri
 		// Serial console to log file
 		"-serial", fmt.Sprintf("file:%s", inst.SerialLogPath()),
 
-		// Headless
+		// Headless, no default devices, no user config overrides
 		"-nographic",
 		"-nodefaults",
+		"-no-user-config",
 
 		// PID file
 		"-pidfile", inst.PIDFilePath(),
 
 		// Daemonize so mb returns immediately
 		"-daemonize",
-	}
+	)
 
 	// Networking
 	args = append(args, q.buildNetworkArgs(inst, cfg)...)
