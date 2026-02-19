@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // MixtapesDir returns the path to the mixtapes directory.
@@ -15,6 +16,54 @@ func MixtapesDir(baseDir string) string {
 // VMsDir returns the path to the VMs directory.
 func VMsDir(baseDir string) string {
 	return filepath.Join(baseDir, "vms")
+}
+
+// KernelArtifacts holds the resolved paths for direct kernel boot.
+// These correspond to the bzImage, initrd, and cmdline files produced
+// by the stereOS build (system.build.kernelArtifacts in image.nix).
+type KernelArtifacts struct {
+	Kernel  string // Path to bzImage
+	Initrd  string // Path to initrd
+	Cmdline string // Kernel command line (contents of cmdline file)
+}
+
+// ResolveKernelArtifacts checks if a mixtape has kernel artifacts for
+// direct kernel boot. It looks for a kernel-artifacts/ directory alongside
+// the disk image containing bzImage, initrd, and cmdline files.
+//
+// Returns nil if kernel artifacts are not available (caller should fall
+// back to EFI boot).
+func ResolveKernelArtifacts(baseDir, mixtape string) *KernelArtifacts {
+	mixtapeDir := filepath.Join(MixtapesDir(baseDir), mixtape)
+
+	// Look for kernel-artifacts/ subdirectory within the mixtape dir
+	artifactsDir := filepath.Join(mixtapeDir, "kernel-artifacts")
+	if _, err := os.Stat(artifactsDir); os.IsNotExist(err) {
+		return nil
+	}
+
+	kernelPath := filepath.Join(artifactsDir, "bzImage")
+	initrdPath := filepath.Join(artifactsDir, "initrd")
+	cmdlinePath := filepath.Join(artifactsDir, "cmdline")
+
+	// All three files must exist
+	for _, p := range []string{kernelPath, initrdPath, cmdlinePath} {
+		if _, err := os.Stat(p); err != nil {
+			return nil
+		}
+	}
+
+	// Read the cmdline file contents
+	cmdlineBytes, err := os.ReadFile(cmdlinePath)
+	if err != nil {
+		return nil
+	}
+
+	return &KernelArtifacts{
+		Kernel:  kernelPath,
+		Initrd:  initrdPath,
+		Cmdline: strings.TrimSpace(string(cmdlineBytes)),
+	}
 }
 
 // ResolveMixtapePath resolves a mixtape name to an image path. For short
