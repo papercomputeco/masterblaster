@@ -577,29 +577,40 @@ func (q *QEMUBackend) buildNetworkArgs(inst *Instance, cfg *config.JcardConfig) 
 func (q *QEMUBackend) postBoot(ctx context.Context, inst *Instance, cfg *config.JcardConfig) error {
 	transport := q.controlPlaneTransport(inst)
 
-	// Give the VM a moment to boot
-	time.Sleep(2 * time.Second)
-
-	// Try connecting to stereosd with retries
+	// Connect to stereosd with aggressive exponential backoff.
+	// The guest typically boots in ~3.5s; we start trying immediately with
+	// short intervals (100ms, 200ms, 400ms, 800ms) then cap at 1s, so we
+	// connect within ~500ms of stereosd becoming ready.
 	var client *vsock.Client
 	var err error
 	deadline := time.Now().Add(120 * time.Second)
+	backoff := 100 * time.Millisecond
+	const maxBackoff = 1 * time.Second
 	for time.Now().Before(deadline) {
-		client, err = vsock.Connect(transport, 5*time.Second)
+		client, err = vsock.Connect(transport, 2*time.Second)
 		if err == nil {
 			break
 		}
-		time.Sleep(3 * time.Second)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
 	}
 	if client == nil {
 		return fmt.Errorf("could not connect to stereosd via %s after 120s: %w", transport, err)
 	}
 	defer func() { _ = client.Close() }()
 
-	// Wait for ready state
+	// Wait for ready state with tight polling — stereosd is usually ready
+	// immediately after accepting the connection.
 	readyCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	if err := client.WaitForReady(readyCtx, 2*time.Second); err != nil {
+	if err := client.WaitForReady(readyCtx, 200*time.Millisecond); err != nil {
 		return fmt.Errorf("waiting for stereosd ready: %w", err)
 	}
 
