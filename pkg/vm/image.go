@@ -2,6 +2,7 @@ package vm
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -122,18 +123,45 @@ func createQCOWOverlay(baseImage, overlayPath, diskSize string) error {
 
 // copyRawImage copies a raw disk image for use as a writable disk.
 // Unlike qcow2 overlays, raw images are used directly so we copy them.
+//
+// On macOS/APFS, this uses clonefile(2) for a near-instant copy-on-write
+// clone. On other platforms, it falls back to streaming io.Copy.
 func copyRawImage(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return fmt.Errorf("reading source image: %w", err)
+	// Try platform-optimized copy first.
+	if err := cloneFile(src, dst); err == nil {
+		// clonefile(2) preserves source permissions. Mixtape images are
+		// typically read-only (0444), but the copy must be writable for
+		// resize and VM disk I/O.
+		if err := os.Chmod(dst, 0644); err != nil {
+			return fmt.Errorf("making cloned image writable: %w", err)
+		}
+		return nil
 	}
-	if err := os.WriteFile(dst, data, 0644); err != nil {
-		return fmt.Errorf("writing disk image: %w", err)
+
+	// Fallback: streaming copy.
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("opening source image: %w", err)
+	}
+	defer func() { _ = srcFile.Close() }()
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("creating disk image: %w", err)
+	}
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		_ = dstFile.Close()
+		return fmt.Errorf("copying disk image: %w", err)
+	}
+	if err := dstFile.Close(); err != nil {
+		return fmt.Errorf("closing disk image: %w", err)
 	}
 	return nil
 }
 
 // resizeRawImage resizes a raw disk image to the given size using qemu-img.
+// The size string uses QEMU notation (e.g. "20G", "512M").
 func resizeRawImage(imagePath, size string) error {
 	qemuImg, err := exec.LookPath("qemu-img")
 	if err != nil {

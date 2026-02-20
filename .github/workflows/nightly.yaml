@@ -45,10 +45,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  build:
+  move-nightly-tag:
+    name: Move up Nightly tag
     needs: check
     if: needs.check.outputs.should_build == 'true'
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
       - name: Move nightly tag up to HEAD
@@ -58,12 +60,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  build-linux:
+    name: Build Linux
+    needs: [check, move-nightly-tag]
+    if: needs.check.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Install Dagger
         uses: dagger/dagger-for-github@v8.2.0
         with:
           version: ${{ env.DAGGER_VERSION }}
 
-      - name: Build upload nightly release artifacts
+      - name: Build and upload Linux nightly artifacts to bucket
         run: |
           dagger call \
             release-nightly \
@@ -81,6 +92,83 @@ jobs:
           BUCKET_SECRET_ACCESS_KEY: ${{ secrets.BUCKET_SECRET_ACCESS_KEY }}
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
+      - name: Upload linux artifacts for gh release
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-nightly
+          path: build/
+          retention-days: 1
+
+  build-darwin:
+    name: Build macOS arm64
+    needs: [check, move-nightly-tag]
+    if: needs.check.outputs.should_build == 'true'
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build and codesign darwin/arm64 binary
+        run: make apple-build VERSION=nightly COMMIT="${{ github.sha }}"
+
+      - name: Generate checksum
+        run: shasum -a 256 build/darwin/arm64/mb > build/darwin/arm64/mb.sha256
+
+      - name: Install Dagger
+        uses: dagger/dagger-for-github@v8.2.0
+        with:
+          version: ${{ env.DAGGER_VERSION }}
+
+      - name: Upload darwin artifacts to bucket
+        run: |
+          dagger call \
+            upload-darwin-artifacts \
+              --access-key-id=env://BUCKET_ACCESS_KEY_ID \
+              --binary=./build/darwin/arm64/mb \
+              --bucket=env://BUCKET_NAME \
+              --checksum=./build/darwin/arm64/mb.sha256 \
+              --endpoint=env://BUCKET_ENDPOINT \
+              --prefixes="nightly/darwin/arm64" \
+              --secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
+        env:
+          BUCKET_ENDPOINT: ${{ secrets.BUCKET_ENDPOINT }}
+          BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
+          BUCKET_ACCESS_KEY_ID: ${{ secrets.BUCKET_ACCESS_KEY_ID }}
+          BUCKET_SECRET_ACCESS_KEY: ${{ secrets.BUCKET_SECRET_ACCESS_KEY }}
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
+      - name: Upload darwin artifacts for gh release
+        uses: actions/upload-artifact@v4
+        with:
+          name: darwin-nightly
+          path: build/
+          retention-days: 1
+
+  upload:
+    name: Upload Nightly Artifacts
+    needs: [build-linux, build-darwin]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-nightly
+          path: build/
+
+      - name: Download darwin artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: darwin-nightly
+          path: build/
+
       - name: Update nightly GitHub release
         uses: ncipollo/release-action@v1
         with:
@@ -96,7 +184,6 @@ jobs:
             **Download:**
             - Linux AMD64: `curl -LO https://masterblaster.stereos.ai/nightly/linux/amd64/mb`
             - Linux ARM64: `curl -LO https://masterblaster.stereos.ai/nightly/linux/arm64/mb`
-            - macOS AMD64: `curl -LO https://masterblaster.stereos.ai/nightly/darwin/amd64/mb`
             - macOS ARM64: `curl -LO https://masterblaster.stereos.ai/nightly/darwin/arm64/mb`
           prerelease: true
           allowUpdates: true
@@ -104,7 +191,7 @@ jobs:
           makeLatest: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload artifacts to release
+      - name: Upload artifacts to GitHub release
         run: |
           dagger call -m github.com/papercomputeco/daggerverse/ghrelease \
               --token=env:GH_TOKEN \

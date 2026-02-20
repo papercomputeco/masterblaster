@@ -225,13 +225,12 @@ func (d *Daemon) handleUp(ctx context.Context, req *Request) Response {
 			// Stopped -- re-boot the existing sandbox with its disk
 			existing.Config = cfg
 			if err := d.backend.Start(ctx, existing); err != nil {
-				// If QEMU started but post-boot failed, mark as running
-				// so the user can debug or retry.
-				if existing.PID > 0 {
-					d.mu.Lock()
-					existing.VMState = vm.StateRunning
-					d.mu.Unlock()
-					d.logger.Printf("sandbox %q partially re-started (QEMU running, post-boot failed): %v", name, err)
+				// If the hypervisor started but post-boot failed, the
+				// backend sets VMState = StateRunning before returning.
+				// The instance is already in d.vms, so no map update is
+				// needed — just log so the user knows they can debug or retry.
+				if existing.VMState == vm.StateRunning {
+					d.logger.Printf("sandbox %q partially re-started (VM running, post-boot failed): %v", name, err)
 				}
 				return Response{Error: fmt.Sprintf("starting sandbox: %v", err)}
 			}
@@ -255,16 +254,21 @@ func (d *Daemon) handleUp(ctx context.Context, req *Request) Response {
 	}
 
 	if err := d.backend.Up(ctx, inst); err != nil {
-		// If QEMU started (PID > 0) but post-boot provisioning failed,
-		// register the instance so the user can debug with `mb ssh`,
+		// If the hypervisor started but post-boot provisioning failed,
+		// the backend sets inst.VMState = StateRunning before returning.
+		// Register the instance so the user can debug with `mb ssh`,
 		// retry with `mb up`, or clean up with `mb destroy`. Without
-		// this, the daemon loses track of the running QEMU process.
-		if inst.PID > 0 {
-			inst.VMState = vm.StateRunning
+		// this, the daemon loses track of the running VM.
+		//
+		// Note: we check VMState rather than inst.PID because the Apple
+		// Virtualization.framework backend has no PID (the VM runs
+		// in-process). The backend is responsible for setting VMState
+		// to StateRunning once the hypervisor is up, before postBoot.
+		if inst.VMState == vm.StateRunning {
 			d.mu.Lock()
 			d.vms[name] = inst
 			d.mu.Unlock()
-			d.logger.Printf("sandbox %q partially started (QEMU running, post-boot failed): %v", name, err)
+			d.logger.Printf("sandbox %q partially started (VM running, post-boot failed): %v", name, err)
 		}
 		return Response{Error: fmt.Sprintf("starting sandbox: %v", err)}
 	}

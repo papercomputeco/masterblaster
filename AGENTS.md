@@ -19,7 +19,7 @@ See SPEC.md for the full RFC specification.
 
 ```bash
 make build        # Produces ./build/mb binary
-make test         # Runs go test ./...
+make check        # Runs go tests in Dagger
 make clean        # Removes the build/ directory
 make fmt          # Formats code
 make vet          # Runs go vet

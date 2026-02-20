@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -226,15 +227,21 @@ func (c *Client) WaitForReady(ctx context.Context, pollInterval time.Duration) e
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
+	attempts := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			attempts++
 			health, err := c.GetHealth(ctx)
 			if err != nil {
+				if attempts <= 5 || attempts%20 == 0 {
+					log.Printf("[vsock] WaitForReady: attempt %d: GetHealth error: %v", attempts, err)
+				}
 				continue // Not ready yet
 			}
+			log.Printf("[vsock] WaitForReady: attempt %d: state=%q uptime=%ds", attempts, health.State, health.Uptime)
 			switch health.State {
 			case StateReady, StateHealthy:
 				return nil
