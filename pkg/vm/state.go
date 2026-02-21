@@ -20,6 +20,20 @@ type StateFile struct {
 	SSHPort     int       `json:"ssh_port"`
 	VsockPort   int       `json:"vsock_port"`
 	ConfigPath  string    `json:"config_path,omitempty"`
+
+	// Backend identifies which Backend implementation owns this VM.
+	Backend string `json:"backend,omitempty"`
+
+	// PlatformData holds opaque backend-specific persistent state.
+	// Each backend can use this to store identity or configuration data
+	// that must survive across daemon restarts and up/down cycles.
+	//
+	// Examples:
+	//   - Apple Virt: serialized vz.GenericMachineIdentifier (gives the
+	//     guest a stable MAC address, EFI NVRAM, etc.)
+	//   - QEMU: could store a generated machine UUID for SMBIOS identity
+	//     (-smbios type=1,uuid=...) if needed in the future.
+	PlatformData []byte `json:"platform_data,omitempty"`
 }
 
 // stateFilePath returns the path to state.json for a given VM directory.

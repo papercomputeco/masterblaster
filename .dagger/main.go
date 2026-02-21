@@ -44,9 +44,13 @@ func (m *Masterblaster) goContainer() *dagger.Container {
 		WithWorkdir("/src")
 }
 
-// Build cross-compiles the mb binary for all supported platforms
+// Build cross-compiles the mb binary for all supported Linux platforms
 // and returns a directory containing the output binaries organized
 // as {os}/{arch}/mb.
+//
+// Darwin builds are excluded because the vz (Apple Virtualization.framework)
+// dependency requires cgo with Objective-C and cannot be cross-compiled from
+// Linux. Darwin artifacts are built on native Apple hardware via GitHub Actions.
 func (m *Masterblaster) Build(
 	ctx context.Context,
 
@@ -58,8 +62,6 @@ func (m *Masterblaster) Build(
 	targets := []buildTarget{
 		{"linux", "amd64"},
 		{"linux", "arm64"},
-		{"darwin", "amd64"},
-		{"darwin", "arm64"},
 	}
 
 	golang := m.goContainer()

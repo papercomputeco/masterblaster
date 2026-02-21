@@ -46,6 +46,25 @@ func (t *TCPTransport) String() string {
 	return fmt.Sprintf("tcp:%s:%d", t.Host, t.Port)
 }
 
+// FuncTransport is a Transport backed by an arbitrary dial function.
+// It is used by the Apple Virtualization.framework backend to inject a
+// vz.VirtioSocketDevice connection without creating an import dependency
+// between pkg/vsock and the darwin-only vz package.
+type FuncTransport struct {
+	// DialFn is called by Dial to establish the connection.
+	DialFn func(timeout time.Duration) (net.Conn, error)
+	// Label is returned by String() for logging and error messages.
+	Label string
+}
+
+// Dial calls the underlying dial function.
+func (f *FuncTransport) Dial(timeout time.Duration) (net.Conn, error) {
+	return f.DialFn(timeout)
+}
+
+// String returns the human-readable label.
+func (f *FuncTransport) String() string { return f.Label }
+
 // NOTE: VsockTransport for Linux/KVM (AF_VSOCK CID:3 port 1024) will be
 // implemented when Linux backend support is built. It requires:
 //

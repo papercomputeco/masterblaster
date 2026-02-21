@@ -3,7 +3,6 @@ package vm
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -185,6 +184,7 @@ func (q *QEMUBackend) boot(ctx context.Context, inst *Instance, cfg *config.Jcar
 		NetworkMode: cfg.Network.Mode,
 		SSHPort:     inst.SSHPort,
 		VsockPort:   inst.VsockPort,
+		Backend:     "qemu",
 	}
 	if err := saveState(inst.Dir, stateFile); err != nil {
 		return fmt.Errorf("saving state: %w", err)
@@ -335,7 +335,9 @@ func (q *QEMUBackend) Status(_ context.Context, inst *Instance) (State, error) {
 	}
 }
 
-// List returns all known VM instances by scanning the vms directory.
+// List returns all VM instances owned by the QEMU backend by scanning the
+// vms directory. VMs with a different backend field in state.json are skipped
+// so that multiple backends can coexist in the same base directory.
 func (q *QEMUBackend) List(ctx context.Context) ([]*Instance, error) {
 	vmsDir := VMsDir(q.baseDir)
 	entries, err := os.ReadDir(vmsDir)
@@ -351,6 +353,16 @@ func (q *QEMUBackend) List(ctx context.Context) ([]*Instance, error) {
 		if !entry.IsDir() {
 			continue
 		}
+
+		// Check backend ownership before loading the full instance.
+		state, err := loadState(filepath.Join(vmsDir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		if state.Backend != "qemu" {
+			continue
+		}
+
 		inst, err := q.LoadInstance(entry.Name())
 		if err != nil {
 			continue
@@ -726,30 +738,6 @@ func initEFIVars(path string) error {
 		return fmt.Errorf("sizing EFI vars file: %w", err)
 	}
 	return nil
-}
-
-// processAlive checks if a process with the given PID exists.
-func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = proc.Signal(syscall.Signal(0))
-	return err == nil
-}
-
-// allocatePort finds a free TCP port by binding to :0.
-func allocatePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, fmt.Errorf("finding free port: %w", err)
-	}
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
-	return port, nil
 }
 
 // convertSizeForQEMU converts human-friendly size strings like "4GiB" to

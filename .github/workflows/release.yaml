@@ -8,7 +8,8 @@ env:
   DAGGER_VERSION: "0.19.11"
 
 jobs:
-  release:
+  build-linux:
+    name: Build & Upload Linux
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -22,7 +23,7 @@ jobs:
         with:
           version: ${{ env.DAGGER_VERSION }}
 
-      - name: Build upload release artifacts
+      - name: Build and upload Linux release artifacts to bucket
         run: |
           dagger call \
             release-latest \
@@ -41,7 +42,89 @@ jobs:
           BUCKET_SECRET_ACCESS_KEY: ${{ secrets.BUCKET_SECRET_ACCESS_KEY }}
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
-      - name: Upload artifacts to release
+      - name: Upload linux artifacts for gh release
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: build/
+          retention-days: 1
+
+  build-darwin:
+    name: Build macOS arm64
+    runs-on: macos-15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build and codesign darwin/arm64 binary
+        run: make apple-build
+
+      - name: Generate checksum
+        run: shasum -a 256 build/darwin/arm64/mb > build/darwin/arm64/mb.sha256
+
+      - name: Install Dagger
+        uses: dagger/dagger-for-github@v8.2.0
+        with:
+          version: ${{ env.DAGGER_VERSION }}
+
+      - name: Upload darwin artifacts to bucket
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          dagger call \
+            upload-darwin-artifacts \
+              --binary=./build/darwin/arm64/mb \
+              --checksum=./build/darwin/arm64/mb.sha256 \
+              --prefixes="${VERSION}/darwin/arm64","latest/darwin/arm64" \
+              --endpoint=env://BUCKET_ENDPOINT \
+              --bucket=env://BUCKET_NAME \
+              --access-key-id=env://BUCKET_ACCESS_KEY_ID \
+              --secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
+        env:
+          BUCKET_ENDPOINT: ${{ secrets.BUCKET_ENDPOINT }}
+          BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
+          BUCKET_ACCESS_KEY_ID: ${{ secrets.BUCKET_ACCESS_KEY_ID }}
+          BUCKET_SECRET_ACCESS_KEY: ${{ secrets.BUCKET_SECRET_ACCESS_KEY }}
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
+      - name: Upload darwin artifacts for gh release
+        uses: actions/upload-artifact@v4
+        with:
+          name: darwin-release
+          path: build/
+          retention-days: 1
+
+  upload:
+    name: Upload Release Artifacts
+    needs: [build-linux, build-darwin]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-release
+          path: build/
+
+      - name: Download darwin artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: darwin-release
+          path: build/
+
+      - name: Upload combined artifacts to GitHub release
         run: |
           dagger call -m github.com/papercomputeco/daggerverse/ghrelease \
               --token=env:GH_TOKEN \

@@ -70,6 +70,51 @@ func (m *Masterblaster) ReleaseNightly(
 	return artifacts, nil
 }
 
+// UploadDarwinArtifacts uploads the pre-built darwin/arm64 mb binary and its
+// checksum to the S3 bucket. Each file is uploaded individually via UploadFile
+// with the appropriate prefix (e.g., "v1.0.0/darwin/arm64", "latest/darwin/arm64",
+// or "nightly/darwin/arm64").
+//
+// This is called from GitHub Actions after the native macOS build to place
+// darwin artifacts alongside the Linux artifacts already uploaded by Dagger.
+func (m *Masterblaster) UploadDarwinArtifacts(
+	ctx context.Context,
+
+	// The darwin/arm64 mb binary
+	binary *dagger.File,
+
+	// The darwin/arm64 mb.sha256 checksum file
+	checksum *dagger.File,
+
+	// Bucket path prefixes to upload under (e.g., ["v1.0.0/darwin/arm64", "latest/darwin/arm64"])
+	prefixes []string,
+
+	// Bucket endpoint URL
+	endpoint *dagger.Secret,
+
+	// Bucket name
+	bucket *dagger.Secret,
+
+	// Bucket access key ID
+	accessKeyId *dagger.Secret,
+
+	// Bucket secret access key
+	secretAccessKey *dagger.Secret,
+) error {
+	uploader := dag.Bucketuploader(endpoint, bucket, accessKeyId, secretAccessKey)
+
+	for _, prefix := range prefixes {
+		if err := uploader.UploadFile(ctx, binary, dagger.BucketuploaderUploadFileOpts{Prefix: prefix}); err != nil {
+			return fmt.Errorf("failed to upload mb to %s: %w", prefix, err)
+		}
+		if err := uploader.UploadFile(ctx, checksum, dagger.BucketuploaderUploadFileOpts{Prefix: prefix}); err != nil {
+			return fmt.Errorf("failed to upload mb.sha256 to %s: %w", prefix, err)
+		}
+	}
+
+	return nil
+}
+
 // UploadInstallScript uploads the install.sh script to the root of the bucket.
 func (m *Masterblaster) UploadInstallSh(
 	ctx context.Context,

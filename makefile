@@ -5,7 +5,7 @@
 
 BIN_NAME := mb
 VERSION ?= $(shell git describe --tags --always --dirty)
-COMMIT  := $(shell git rev-parse HEAD)
+COMMIT  ?= $(shell git rev-parse HEAD)
 BUILDTIME ?= $(shell date -u '+%Y-%m-%d %H:%M:%S')
 
 LDFLAGS := -s -w \
@@ -25,12 +25,36 @@ build: ## Builds all cross-platform release artifacts via Dagger
 .PHONY: build-local
 build-local: ## Builds local artifacts with local toolchain
 	$(call print-target)
-	@mkdir -p ./build
-	go build -ldflags "$(LDFLAGS)" -o ./build/$(BIN_NAME) .
+	@mkdir -p ./build/local
+	go build -ldflags "$(LDFLAGS)" -o ./build/local/$(BIN_NAME) .
 
-install: build-local ## Builds local artifacts and installs to configured GOBIN
+.PHONY: apple-build
+apple-build: ## Apple: builds darwin/arm64 binary with codesign (requires macOS)
 	$(call print-target)
-	cp ./build/$(BIN_NAME) $(shell go env GOBIN)
+	@if [ "$$(uname -s)" != "Darwin" ]; then \
+		echo "Error: apple-build requires macOS (got $$(uname -s))"; \
+		exit 1; \
+	fi
+	@mkdir -p ./build/darwin/arm64
+	go build -ldflags "$(LDFLAGS)" -o ./build/darwin/arm64/$(BIN_NAME) .
+	codesign --entitlements vz.entitlements -s - ./build/darwin/arm64/$(BIN_NAME)
+
+.PHONY: apple-install
+apple-install: apple-build ## Apple: builds, codesigns, and installs to GOBIN
+	$(call print-target)
+	cp ./build/darwin/arm64/$(BIN_NAME) $(shell go env GOBIN)
+
+.PHONY: upload-darwin-artifacts
+upload-darwin-artifacts: ## Uploads the install script
+	dagger call \
+		upload-darwin-artifacts \
+			--access-key-id=env://BUCKET_ACCESS_KEY_ID \
+			--binary=./build/darwin/arm64/mb \
+			--bucket=env://BUCKET_NAME \
+			--checksum=./build/darwin/arm64/mb.sha256 \
+			--endpoint=env://BUCKET_ENDPOINT \
+			--prefixes="${VERSION}/darwin/arm64" \
+			--secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
 
 .PHONY: upload-install-script
 upload-install-script: ## Uploads the install script
