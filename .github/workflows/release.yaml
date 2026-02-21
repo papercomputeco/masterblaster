@@ -70,6 +70,12 @@ jobs:
       - name: Generate checksum
         run: shasum -a 256 build/darwin/arm64/mb > build/darwin/arm64/mb.sha256
 
+      - name: Setup container runtime on macOS for Dagger
+        id: setup-docker
+        uses: douglascamata/setup-docker-macos-action@v1.0.1
+        with:
+          colima: v0.10.0
+
       - name: Install Dagger
         uses: dagger/dagger-for-github@v8.2.0
         with:
