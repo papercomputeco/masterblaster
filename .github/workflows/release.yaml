@@ -70,35 +70,6 @@ jobs:
       - name: Generate checksum
         run: shasum -a 256 build/darwin/arm64/mb > build/darwin/arm64/mb.sha256
 
-      - name: Setup container runtime on macOS for Dagger
-        id: setup-docker
-        uses: douglascamata/setup-docker-macos-action@v1.0.1
-        with:
-          colima: v0.10.0
-
-      - name: Install Dagger
-        uses: dagger/dagger-for-github@v8.2.0
-        with:
-          version: ${{ env.DAGGER_VERSION }}
-
-      - name: Upload darwin artifacts to bucket
-        run: |
-          VERSION="${{ github.event.release.tag_name }}"
-          dagger call \
-            upload-darwin-artifacts \
-              --binary=./build/darwin/arm64/mb \
-              --checksum=./build/darwin/arm64/mb.sha256 \
-              --prefixes="${VERSION}/darwin/arm64","latest/darwin/arm64" \
-              --endpoint=env://BUCKET_ENDPOINT \
-              --bucket=env://BUCKET_NAME \
-              --access-key-id=env://BUCKET_ACCESS_KEY_ID \
-              --secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
-        env:
-          BUCKET_ENDPOINT: ${{ secrets.BUCKET_ENDPOINT }}
-          BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
-          BUCKET_ACCESS_KEY_ID: ${{ secrets.BUCKET_ACCESS_KEY_ID }}
-          BUCKET_SECRET_ACCESS_KEY: ${{ secrets.BUCKET_SECRET_ACCESS_KEY }}
-          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
 
       - name: Upload darwin artifacts for gh release
         uses: actions/upload-artifact@v4
@@ -130,7 +101,31 @@ jobs:
           name: darwin-release
           path: build/
 
-      - name: Upload combined artifacts to GitHub release
+      - name: Install Dagger
+        uses: dagger/dagger-for-github@v8.2.0
+        with:
+          version: ${{ env.DAGGER_VERSION }}
+
+      - name: Upload darwin artifacts to bucket
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          dagger call \
+            upload-darwin-artifacts \
+              --binary=./build/darwin/arm64/mb \
+              --checksum=./build/darwin/arm64/mb.sha256 \
+              --prefixes="${VERSION}/darwin/arm64","latest/darwin/arm64" \
+              --endpoint=env://BUCKET_ENDPOINT \
+              --bucket=env://BUCKET_NAME \
+              --access-key-id=env://BUCKET_ACCESS_KEY_ID \
+              --secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
+        env:
+          BUCKET_ENDPOINT: ${{ secrets.BUCKET_ENDPOINT }}
+          BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
+          BUCKET_ACCESS_KEY_ID: ${{ secrets.BUCKET_ACCESS_KEY_ID }}
+          BUCKET_SECRET_ACCESS_KEY: ${{ secrets.BUCKET_SECRET_ACCESS_KEY }}
+          DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
+
+      - name: Upload all artifacts to GitHub release
         run: |
           dagger call -m github.com/papercomputeco/daggerverse/ghrelease \
               --token=env:GH_TOKEN \
