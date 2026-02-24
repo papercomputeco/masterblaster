@@ -1,4 +1,4 @@
-mixtape = "test"
+mixtape = "opencode-mixtape:latest"
 
 [agent]
 harness = "opencode"

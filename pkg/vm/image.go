@@ -29,23 +29,33 @@ type KernelArtifacts struct {
 }
 
 // ResolveKernelArtifacts checks if a mixtape has kernel artifacts for
-// direct kernel boot. It looks for a kernel-artifacts/ directory alongside
-// the disk image containing bzImage, initrd, and cmdline files.
+// direct kernel boot. It looks for bzImage, initrd, and cmdline files
+// in the resolved mixtape directory.
+//
+// The mixtape string can be "name" (implies latest) or "name:tag".
+// The on-disk layout is mixtapes/{name}/{tag}/.
 //
 // Returns nil if kernel artifacts are not available (caller should fall
 // back to EFI boot).
 func ResolveKernelArtifacts(baseDir, mixtape string) *KernelArtifacts {
-	mixtapeDir := filepath.Join(MixtapesDir(baseDir), mixtape)
+	mixtapeDir := resolveMixtapeDir(baseDir, mixtape)
 
-	// Look for kernel-artifacts/ subdirectory within the mixtape dir
-	artifactsDir := filepath.Join(mixtapeDir, "kernel-artifacts")
-	if _, err := os.Stat(artifactsDir); os.IsNotExist(err) {
-		return nil
+	// Try flat layout (from OCI pull).
+	if ka := resolveKernelArtifactsInDir(mixtapeDir); ka != nil {
+		return ka
 	}
 
-	kernelPath := filepath.Join(artifactsDir, "bzImage")
-	initrdPath := filepath.Join(artifactsDir, "initrd")
-	cmdlinePath := filepath.Join(artifactsDir, "cmdline")
+	// Fallback: legacy kernel-artifacts/ subdirectory.
+	artifactsDir := filepath.Join(mixtapeDir, "kernel-artifacts")
+	return resolveKernelArtifactsInDir(artifactsDir)
+}
+
+// resolveKernelArtifactsInDir looks for bzImage, initrd, and cmdline in
+// the given directory. Returns nil if any required file is missing.
+func resolveKernelArtifactsInDir(dir string) *KernelArtifacts {
+	kernelPath := filepath.Join(dir, "bzImage")
+	initrdPath := filepath.Join(dir, "initrd")
+	cmdlinePath := filepath.Join(dir, "cmdline")
 
 	// All three files must exist
 	for _, p := range []string{kernelPath, initrdPath, cmdlinePath} {
@@ -67,22 +77,49 @@ func ResolveKernelArtifacts(baseDir, mixtape string) *KernelArtifacts {
 	}
 }
 
-// ResolveMixtapePath resolves a mixtape name to an image path. For short
-// names, it looks in ~/.mb/mixtapes/<name>/. For now we support both raw
-// and qcow2 images.
-func ResolveMixtapePath(baseDir, mixtape string) (string, error) {
-	mixtapeDir := filepath.Join(MixtapesDir(baseDir), mixtape)
+// resolveMixtapeDir maps a mixtape string ("name" or "name:tag") to the
+// on-disk directory path. The layout is mixtapes/{name}/{tag}/.
+// If no tag is specified, "latest" is assumed.
+func resolveMixtapeDir(baseDir, mixtape string) string {
+	name, tag := parseMixtapeRef(mixtape)
+	return filepath.Join(MixtapesDir(baseDir), name, tag)
+}
 
-	// Try raw image first (preferred for Apple Virt framework)
-	rawPath := filepath.Join(mixtapeDir, "nixos.img")
-	if _, err := os.Stat(rawPath); err == nil {
-		return rawPath, nil
+// parseMixtapeRef splits a mixtape reference into name and tag.
+// "opencode-mixtape"       -> ("opencode-mixtape", "latest")
+// "opencode-mixtape:0.1.0" -> ("opencode-mixtape", "0.1.0")
+func parseMixtapeRef(mixtape string) (name, tag string) {
+	if idx := strings.LastIndex(mixtape, ":"); idx != -1 {
+		return mixtape[:idx], mixtape[idx+1:]
 	}
+	return mixtape, "latest"
+}
 
-	// Try qcow2 (QEMU)
-	qcow2Path := filepath.Join(mixtapeDir, "nixos.qcow2")
-	if _, err := os.Stat(qcow2Path); err == nil {
-		return qcow2Path, nil
+// ResolveMixtapePath resolves a mixtape reference to a disk image path.
+// The mixtape string can be "name" (implies :latest) or "name:tag".
+// The on-disk layout is mixtapes/{name}/{tag}/.
+//
+// It searches for disk images in the following order:
+//
+//  1. stereos.img  (raw, preferred for Apple Virt framework -- from OCI pull)
+//  2. stereos.qcow2 (qcow2, QEMU -- from OCI pull)
+//  3. nixos.img     (raw, legacy naming)
+//  4. nixos.qcow2   (qcow2, legacy naming)
+//  5. mixtapeDir itself as a bare image file
+func ResolveMixtapePath(baseDir, mixtape string) (string, error) {
+	mixtapeDir := resolveMixtapeDir(baseDir, mixtape)
+
+	// Search for disk images in priority order.
+	candidates := []string{
+		filepath.Join(mixtapeDir, "stereos.img"),
+		filepath.Join(mixtapeDir, "stereos.qcow2"),
+		filepath.Join(mixtapeDir, "nixos.img"),
+		filepath.Join(mixtapeDir, "nixos.qcow2"),
+	}
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
+		}
 	}
 
 	// Try just the mixtape dir as a single image file
@@ -92,10 +129,10 @@ func ResolveMixtapePath(baseDir, mixtape string) (string, error) {
 
 	return "", fmt.Errorf("mixtape %q not found at %s\n\n"+
 		"Pull a mixtape first:\n"+
-		"  mb mixtapes pull %s\n\n"+
+		"  mb pull %s\n\n"+
 		"Or place a StereOS image at:\n"+
-		"  %s/nixos.img\n"+
-		"  %s/nixos.qcow2",
+		"  %s/stereos.img\n"+
+		"  %s/stereos.qcow2",
 		mixtape, mixtapeDir, mixtape, mixtapeDir, mixtapeDir)
 }
 

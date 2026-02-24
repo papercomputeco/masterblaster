@@ -11,6 +11,7 @@ import (
 	initcmder "github.com/papercomputeco/masterblaster/cmd/init"
 	listcmder "github.com/papercomputeco/masterblaster/cmd/list"
 	mixtapescmder "github.com/papercomputeco/masterblaster/cmd/mixtapes"
+	pullcmder "github.com/papercomputeco/masterblaster/cmd/pull"
 	servecmder "github.com/papercomputeco/masterblaster/cmd/serve"
 	sshcmder "github.com/papercomputeco/masterblaster/cmd/ssh"
 	statuscmder "github.com/papercomputeco/masterblaster/cmd/status"
@@ -52,6 +53,7 @@ func NewMbCmd() *cobra.Command {
 	cmd.AddCommand(sshcmder.NewSSHCmd(mbconfig.ConfigDir, mbconfig.Verbose))
 	cmd.AddCommand(listcmder.NewListCmd(mbconfig.ConfigDir))
 	cmd.AddCommand(mixtapescmder.NewMixtapesCmd(mbconfig.ConfigDir))
+	cmd.AddCommand(pullcmder.NewPullCmd(mbconfig.ConfigDir))
 	cmd.AddCommand(versioncmder.NewVersionCmd())
 
 	return cmd

@@ -15,9 +15,16 @@ import (
 
 // JcardConfig is the top-level configuration parsed from a jcard.toml file.
 type JcardConfig struct {
-	// Mixtape is the StereOS image to boot. Can be a short name ("base",
-	// "openclaw") resolved from the default registry, or a fully qualified
-	// OCI reference ("ghcr.io/someone/my-mixtape:latest").
+	// Mixtape is the StereOS image to boot, in "name:tag" format.
+	// The tag defaults to "latest" when omitted.
+	//
+	// Examples:
+	//   "opencode-mixtape"       -> opencode-mixtape:latest
+	//   "opencode-mixtape:0.1.0" -> pinned to tag 0.1.0
+	//   "base"                   -> base:latest
+	//
+	// Images are resolved from ~/.config/mb/mixtapes/{name}/{tag}/.
+	// Pull with: mb pull opencode-mixtape:0.1.0
 	Mixtape string `toml:"mixtape"`
 
 	// MixtapeDigest pins to an exact digest for reproducible builds.
@@ -173,7 +180,7 @@ func DefaultJcard() *JcardConfig {
 // applyDefaults fills in zero-value fields with sensible defaults.
 func applyDefaults(cfg *JcardConfig) {
 	if cfg.Mixtape == "" {
-		cfg.Mixtape = "base"
+		cfg.Mixtape = "base:latest"
 	}
 
 	if cfg.Resources.CPUs == 0 {

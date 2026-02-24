@@ -216,6 +216,44 @@ forwards = [
 		)
 	})
 
+	Describe("Mixtape name:tag format", func() {
+		It("should accept name:tag format", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `mixtape = "opencode-mixtape:0.1.0"`
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Mixtape).To(Equal("opencode-mixtape:0.1.0"))
+		})
+
+		It("should accept bare name without tag", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `mixtape = "base"`
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Mixtape).To(Equal("base"))
+		})
+
+		It("should default to base:latest when mixtape is omitted", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `
+[resources]
+cpus = 2
+`
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Mixtape).To(Equal("base:latest"))
+		})
+	})
+
 	Describe("Name defaulting", func() {
 		It("should default the name to the directory name", func() {
 			dir := GinkgoT().TempDir()
