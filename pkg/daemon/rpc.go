@@ -49,6 +49,7 @@ type SandboxInfo struct {
 	Memory      string `json:"memory"`
 	SSHPort     int    `json:"ssh_port"`
 	SSHAddress  string `json:"ssh_address"`
+	SSHKeyPath  string `json:"ssh_key_path,omitempty"`
 	VsockPort   int    `json:"vsock_port"`
 	NetworkMode string `json:"network_mode"`
 }

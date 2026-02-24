@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/papercomputeco/masterblaster/pkg/config"
+	"github.com/papercomputeco/masterblaster/pkg/ssh"
 	"github.com/papercomputeco/masterblaster/pkg/vsock"
 )
 
@@ -173,6 +174,16 @@ func (q *QEMUBackend) boot(ctx context.Context, inst *Instance, cfg *config.Jcar
 
 	inst.QMPSocket = filepath.Join(inst.Dir, "qmp.sock")
 
+	// Generate ephemeral SSH keypair for this sandbox. The private key
+	// is stored in the VM directory and used by `mb ssh`. The public
+	// key is injected into the guest during postBoot.
+	sshKeyPath, sshPubKey, err := ssh.GenerateKeyPair(inst.Dir, fmt.Sprintf("mb-%s", inst.Name))
+	if err != nil {
+		return fmt.Errorf("generating SSH keypair: %w", err)
+	}
+	inst.SSHKeyPath = sshKeyPath
+	inst.sshPublicKey = sshPubKey
+
 	// Save/update state
 	stateFile := &StateFile{
 		Name:        inst.Name,
@@ -184,6 +195,7 @@ func (q *QEMUBackend) boot(ctx context.Context, inst *Instance, cfg *config.Jcar
 		NetworkMode: cfg.Network.Mode,
 		SSHPort:     inst.SSHPort,
 		VsockPort:   inst.VsockPort,
+		SSHKeyPath:  sshKeyPath,
 		Backend:     "qemu",
 	}
 	if err := saveState(inst.Dir, stateFile); err != nil {
@@ -384,11 +396,12 @@ func (q *QEMUBackend) LoadInstance(name string) (*Instance, error) {
 	}
 
 	inst := &Instance{
-		Name:      state.Name,
-		Dir:       vmDir,
-		QMPSocket: filepath.Join(vmDir, "qmp.sock"),
-		SSHPort:   state.SSHPort,
-		VsockPort: state.VsockPort,
+		Name:       state.Name,
+		Dir:        vmDir,
+		QMPSocket:  filepath.Join(vmDir, "qmp.sock"),
+		SSHPort:    state.SSHPort,
+		VsockPort:  state.VsockPort,
+		SSHKeyPath: state.SSHKeyPath,
 	}
 
 	// Try to read PID
@@ -633,6 +646,13 @@ func (q *QEMUBackend) postBoot(ctx context.Context, inst *Instance, cfg *config.
 	}
 	if err := client.SetConfig(ctx, string(cfgBytes)); err != nil {
 		return fmt.Errorf("setting guest config: %w", err)
+	}
+
+	// Inject ephemeral SSH public key for the admin user
+	if inst.sshPublicKey != "" {
+		if err := client.InjectSSHKey(ctx, "admin", inst.sshPublicKey); err != nil {
+			return fmt.Errorf("injecting SSH key: %w", err)
+		}
 	}
 
 	// Inject secrets

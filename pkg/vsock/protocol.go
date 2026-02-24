@@ -19,6 +19,7 @@ const (
 	MsgShutdown     MessageType = "shutdown"
 	MsgGetHealth    MessageType = "get_health"
 	MsgSetConfig    MessageType = "set_config"
+	MsgInjectSSHKey MessageType = "inject_ssh_key"
 
 	// Guest -> Host messages
 	MsgPong      MessageType = "pong"
@@ -118,4 +119,14 @@ type HealthPayload struct {
 type ConfigPayload struct {
 	// Content is the raw jcard.toml content to write inside the guest.
 	Content string `json:"content"`
+}
+
+// SSHKeyPayload is the payload for inject_ssh_key messages.
+type SSHKeyPayload struct {
+	// User is the guest user whose authorized_keys will be updated.
+	User string `json:"user"`
+
+	// PublicKey is the SSH public key in authorized_keys format
+	// (e.g. "ssh-ed25519 AAAA... comment").
+	PublicKey string `json:"public_key"`
 }

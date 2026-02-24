@@ -12,7 +12,12 @@ import (
 // clean interactive experience. Signal handling, terminal resizing, SSH
 // agent forwarding, and ~. escape sequences all work correctly because
 // the user talks directly to OpenSSH.
-func ExecSSH(user, host string, port int) error {
+//
+// If identityFile is non-empty, it is passed as -i to ssh along with
+// -o IdentitiesOnly=yes to prevent the SSH agent or default keys from
+// being tried (which could exhaust MaxAuthTries before the correct
+// ephemeral key is attempted).
+func ExecSSH(user, host string, port int, identityFile string) error {
 	sshBin, err := exec.LookPath("ssh")
 	if err != nil {
 		return fmt.Errorf("ssh binary not found: %w", err)
@@ -25,6 +30,11 @@ func ExecSSH(user, host string, port int) error {
 		"-o", "LogLevel=ERROR",
 		"-t", // Force PTY allocation
 		"-p", fmt.Sprintf("%d", port),
+	}
+
+	if identityFile != "" {
+		args = append(args, "-i", identityFile)
+		args = append(args, "-o", "IdentitiesOnly=yes")
 	}
 
 	args = append(args, fmt.Sprintf("%s@%s", user, host))

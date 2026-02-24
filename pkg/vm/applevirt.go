@@ -16,6 +16,7 @@ import (
 
 	vz "github.com/Code-Hex/vz/v3"
 	"github.com/papercomputeco/masterblaster/pkg/config"
+	"github.com/papercomputeco/masterblaster/pkg/ssh"
 	"github.com/papercomputeco/masterblaster/pkg/vsock"
 )
 
@@ -238,6 +239,14 @@ func (a *AppleVirtBackend) boot(
 	// guest-side port — no host TCP forwarding needed with native vsock.
 	inst.VsockPort = vsock.VsockPort
 
+	// Generate ephemeral SSH keypair for this sandbox
+	sshKeyPath, sshPubKey, err := ssh.GenerateKeyPair(inst.Dir, fmt.Sprintf("mb-%s", inst.Name))
+	if err != nil {
+		return fmt.Errorf("generating SSH keypair: %w", err)
+	}
+	inst.SSHKeyPath = sshKeyPath
+	inst.sshPublicKey = sshPubKey
+
 	// Build the VirtualMachineConfiguration
 	vmConfig, err := a.buildVMConfig(inst, cfg, efiVarStore, machineIDBytes, kernelArtifacts)
 	if err != nil {
@@ -300,6 +309,7 @@ func (a *AppleVirtBackend) boot(
 		NetworkMode:  cfg.Network.Mode,
 		SSHPort:      sshPort,
 		VsockPort:    vsock.VsockPort,
+		SSHKeyPath:   sshKeyPath,
 		Backend:      backendNameAppleVirt,
 		PlatformData: machineIDBytes,
 	}
@@ -584,6 +594,13 @@ func (a *AppleVirtBackend) postBoot(
 		return fmt.Errorf("setting guest config: %w", err)
 	}
 
+	// Inject ephemeral SSH public key for the admin user
+	if inst.sshPublicKey != "" {
+		if err := client.InjectSSHKey(ctx, "admin", inst.sshPublicKey); err != nil {
+			return fmt.Errorf("injecting SSH key: %w", err)
+		}
+	}
+
 	// Inject secrets
 	for name, value := range cfg.Secrets {
 		if err := client.InjectSecret(ctx, name, value); err != nil {
@@ -745,10 +762,11 @@ func (a *AppleVirtBackend) LoadInstance(name string) (*Instance, error) {
 	}
 
 	inst := &Instance{
-		Name:      state.Name,
-		Dir:       vmDir,
-		SSHPort:   state.SSHPort,
-		VsockPort: state.VsockPort,
+		Name:       state.Name,
+		Dir:        vmDir,
+		SSHPort:    state.SSHPort,
+		VsockPort:  state.VsockPort,
+		SSHKeyPath: state.SSHKeyPath,
 	}
 	return inst, nil
 }
