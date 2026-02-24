@@ -42,6 +42,17 @@ type Instance struct {
 	// VMState is the current lifecycle state.
 	VMState State `json:"state"`
 
+	// SSHKeyPath is the path to the ephemeral SSH private key for this
+	// sandbox, stored in the VM directory. Used by `mb ssh` to pass
+	// -i <key> to OpenSSH.
+	SSHKeyPath string `json:"ssh_key_path,omitempty"`
+
+	// sshPublicKey holds the ephemeral public key in authorized_keys
+	// format during boot. It is set by boot() and consumed by postBoot()
+	// for injection into the guest. Not persisted — the public key file
+	// on disk is the durable copy.
+	sshPublicKey string
+
 	// Config is the jcard configuration for this instance.
 	Config *config.JcardConfig `json:"-"`
 }

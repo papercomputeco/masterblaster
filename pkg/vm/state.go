@@ -21,6 +21,11 @@ type StateFile struct {
 	VsockPort   int       `json:"vsock_port"`
 	ConfigPath  string    `json:"config_path,omitempty"`
 
+	// SSHKeyPath is the path to the ephemeral SSH private key, relative
+	// to the VM directory or absolute. Persisted so the key survives
+	// daemon restarts.
+	SSHKeyPath string `json:"ssh_key_path,omitempty"`
+
 	// Backend identifies which Backend implementation owns this VM.
 	Backend string `json:"backend,omitempty"`
 

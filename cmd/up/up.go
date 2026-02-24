@@ -84,7 +84,11 @@ func runUp(baseDir, cfgPath string) error {
 	if len(resp.Sandboxes) > 0 {
 		sb := resp.Sandboxes[0]
 		ui.Success("Sandbox %q started", sb.Name)
-		ui.Info("SSH:   ssh -p %d admin@127.0.0.1", sb.SSHPort)
+		if sb.SSHKeyPath != "" {
+			ui.Info("SSH:   ssh -i %s -p %d admin@127.0.0.1", sb.SSHKeyPath, sb.SSHPort)
+		} else {
+			ui.Info("SSH:   ssh -p %d admin@127.0.0.1", sb.SSHPort)
+		}
 		ui.Info("Or:    mb ssh %s", sb.Name)
 	}
 

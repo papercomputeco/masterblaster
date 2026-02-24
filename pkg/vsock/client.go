@@ -160,6 +160,26 @@ func (c *Client) InjectSecret(ctx context.Context, name, value string) error {
 	return checkAck(resp, MsgInjectSecret)
 }
 
+// InjectSSHKey sends a public key to stereosd for installation into the
+// specified user's authorized_keys file. stereosd creates ~/.ssh/ if needed
+// and writes the key with appropriate ownership and permissions.
+func (c *Client) InjectSSHKey(ctx context.Context, user, publicKey string) error {
+	env, err := NewEnvelope(MsgInjectSSHKey, &SSHKeyPayload{
+		User:      user,
+		PublicKey: publicKey,
+	})
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.send(ctx, env)
+	if err != nil {
+		return fmt.Errorf("inject SSH key for %q: %w", user, err)
+	}
+
+	return checkAck(resp, MsgInjectSSHKey)
+}
+
 // Mount requests stereosd to mount a shared directory.
 func (c *Client) Mount(ctx context.Context, tag, guestPath, fsType string, readOnly bool) error {
 	env, err := NewEnvelope(MsgMount, &MountPayload{

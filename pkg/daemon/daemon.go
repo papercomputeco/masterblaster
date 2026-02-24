@@ -416,6 +416,7 @@ func instanceToInfo(inst *vm.Instance) SandboxInfo {
 		State:      string(inst.VMState),
 		SSHPort:    inst.SSHPort,
 		SSHAddress: fmt.Sprintf("127.0.0.1:%d", inst.SSHPort),
+		SSHKeyPath: inst.SSHKeyPath,
 		VsockPort:  inst.VsockPort,
 	}
 
@@ -425,6 +426,9 @@ func instanceToInfo(inst *vm.Instance) SandboxInfo {
 		info.CPUs = state.CPUs
 		info.Memory = state.Memory
 		info.NetworkMode = state.NetworkMode
+		if info.SSHKeyPath == "" {
+			info.SSHKeyPath = state.SSHKeyPath
+		}
 	}
 
 	return info
