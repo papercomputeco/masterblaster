@@ -17,7 +17,7 @@ and workflows. Use "mb mixtapes ls" to see what's available locally and
 
 Examples:
   mb mixtapes ls
-  mb mixtapes pull base`
+  mb mixtapes pull opencode-mixtape`
 
 const mixtapesShortDesc string = "Manage StereOS mixtapes"
 
@@ -48,10 +48,12 @@ func newMixtapesLsCmd(configDirFn func() string) *cobra.Command {
 
 func newMixtapesPullCmd(configDirFn func() string) *cobra.Command {
 	return &cobra.Command{
-		Use:   "pull <name>",
+		Use:   "pull <name[:tag]>",
 		Short: "Pull a mixtape from the registry",
 		Long: `Download a StereOS mixtape from the Paper Compute registry (or a
-third-party OCI registry) to ~/.mb/mixtapes/.`,
+third-party OCI registry) to ~/.config/mb/mixtapes/<name>/.
+
+This is an alias for "mb pull <name[:tag]>".`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runMixtapesPull(configDirFn(), args[0])

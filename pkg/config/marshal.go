@@ -21,13 +21,15 @@ func Marshal(cfg *JcardConfig) ([]byte, error) {
 func DefaultJcardTOML() string {
 	return `# jcard.toml - Masterblaster sandbox configuration
 
-# Which mixtape to boot.
-# Can be a short name (resolved from the default registry)
-# or a fully qualified OCI reference.
-#   "base"      -> StereOS base image
-#   "openclaw"  -> Paper Compute's OpenClaw mixtape
-#   "ghcr.io/someone/my-mixtape:latest"  -> third-party OCI artifact
-mixtape = "base"
+# Which mixtape to boot, in "name:tag" format.
+# The tag defaults to "latest" when omitted.
+# Pull mixtapes with: mb pull <name:tag>
+#
+# Examples:
+#   "base:latest"              -> StereOS base image (latest tag)
+#   "opencode-mixtape:0.1.0"   -> pinned to a specific version
+#   "base"                     -> shorthand for "base:latest"
+mixtape = "base:latest"
 
 # Pin to an exact digest for reproducible builds (optional).
 # When set, this takes precedence over the tag in mixtape.
