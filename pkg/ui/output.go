@@ -53,7 +53,7 @@ func Success(format string, args ...interface{}) {
 // Warn prints a yellow warning to stderr.
 func Warn(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintf(os.Stderr, "  %s %s\n", warnStyle.Render("!"), msg)
+	fmt.Fprintf(os.Stderr, "  %s\n", warnStyle.Render(msg))
 }
 
 // Error prints a red error to stderr.
