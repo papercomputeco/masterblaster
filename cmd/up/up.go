@@ -5,15 +5,11 @@ package upcmder
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/papercomputeco/masterblaster/pkg/client"
-	"github.com/papercomputeco/masterblaster/pkg/daemon"
+	"github.com/papercomputeco/masterblaster/pkg/daemon/client"
 	"github.com/papercomputeco/masterblaster/pkg/ui"
 )
 
@@ -69,7 +65,7 @@ func runUp(baseDir, cfgPath string) error {
 		return fmt.Errorf("config not found at %s\n\nCreate one with: mb init", cfgPath)
 	}
 
-	if err := ensureDaemon(baseDir); err != nil {
+	if err := client.EnsureDaemon(baseDir); err != nil {
 		return err
 	}
 
@@ -93,42 +89,4 @@ func runUp(baseDir, cfgPath string) error {
 	}
 
 	return nil
-}
-
-// ensureDaemon starts the daemon if it's not already running.
-func ensureDaemon(baseDir string) error {
-	if daemon.IsRunning(baseDir) {
-		return nil
-	}
-
-	ui.Status("Starting daemon...")
-
-	mbBin, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("finding mb binary: %w", err)
-	}
-
-	cmd := exec.Command(mbBin, "serve")
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true,
-	}
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting daemon: %w", err)
-	}
-
-	if err := cmd.Process.Release(); err != nil {
-		return fmt.Errorf("releasing daemon process: %w", err)
-	}
-
-	for i := 0; i < 30; i++ {
-		time.Sleep(200 * time.Millisecond)
-		if daemon.IsRunning(baseDir) {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("daemon did not start within 6 seconds")
 }

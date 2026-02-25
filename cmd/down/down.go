@@ -5,7 +5,7 @@ package downcmder
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/papercomputeco/masterblaster/pkg/client"
+	"github.com/papercomputeco/masterblaster/pkg/daemon/client"
 	"github.com/papercomputeco/masterblaster/pkg/ui"
 )
 
@@ -48,6 +48,10 @@ func NewDownCmd(configDirFn func() string) *cobra.Command {
 }
 
 func runDown(baseDir, name string, force bool) error {
+	if err := client.EnsureDaemon(baseDir); err != nil {
+		return err
+	}
+
 	c := client.New(baseDir)
 
 	ui.Status("Stopping sandbox...")

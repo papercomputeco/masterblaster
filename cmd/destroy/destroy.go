@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/papercomputeco/masterblaster/pkg/client"
+	"github.com/papercomputeco/masterblaster/pkg/daemon/client"
 	"github.com/papercomputeco/masterblaster/pkg/ui"
 )
 
@@ -69,6 +69,10 @@ func runDestroy(baseDir, name string, yes, force bool) error {
 			fmt.Fprintln(os.Stderr, "Aborted.")
 			return nil
 		}
+	}
+
+	if err := client.EnsureDaemon(baseDir); err != nil {
+		return err
 	}
 
 	c := client.New(baseDir)

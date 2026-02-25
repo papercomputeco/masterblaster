@@ -9,13 +9,16 @@ import (
 
 	"github.com/papercomputeco/masterblaster/pkg/daemon"
 	"github.com/papercomputeco/masterblaster/pkg/ui"
-	"github.com/papercomputeco/masterblaster/pkg/vm"
 )
 
 const serveLongDesc string = `Start the long-lived Masterblaster daemon that manages sandbox VMs.
 
 The daemon listens on ~/.mb/mb.sock for CLI commands and manages all
 VM lifecycle operations. Other mb commands communicate with this daemon.
+
+Each VM gets its own vmhost child process that holds the hypervisor handle
+and survives daemon restarts. The daemon acts as a multiplexer, spawning
+and monitoring vmhost processes.
 
 If the daemon is already running, this command exits with an error.`
 
@@ -44,11 +47,7 @@ func runServe(cmd *cobra.Command, baseDir string) error {
 		return errDaemonAlreadyRunning
 	}
 
-	backend, err := vm.NewPlatformBackend(baseDir)
-	if err != nil {
-		return err
-	}
-	d := daemon.New(backend, baseDir)
+	d := daemon.New(baseDir)
 
 	ui.Status("Starting Masterblaster daemon...")
 	return d.Run(cmd.Context())
