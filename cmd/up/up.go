@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -106,8 +107,8 @@ func shortenHome(path string) string {
 	if err != nil || home == "" {
 		return path
 	}
-	if len(path) > len(home) && path[:len(home)] == home {
-		return "~" + path[len(home):]
+	if strings.HasPrefix(path, home) {
+		return "~" + strings.TrimPrefix(path, home)
 	}
 	return path
 }

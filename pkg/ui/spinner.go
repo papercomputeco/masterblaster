@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/term"
 )
 
 var (
@@ -15,40 +16,58 @@ var (
 	spinnerFrames = []string{"\u28fe", "\u28fd", "\u28fb", "\u28bf", "\u287f", "\u28df", "\u28ef", "\u28f7"}
 )
 
+// isTTY reports whether w is connected to a terminal.
+func isTTY(w io.Writer) bool {
+	if f, ok := w.(*os.File); ok {
+		return term.IsTerminal(f.Fd())
+	}
+	return false
+}
+
 // Step prints an animated spinner while fn runs, then replaces it with
 // a checkmark or X mark and elapsed time. Matches tapes cliui.Step().
+// When the writer is not a TTY (piped output, CI), the spinner is
+// skipped and only the final result line is printed.
 func Step(w io.Writer, msg string, fn func() error) error {
-	done := make(chan struct{})
+	interactive := isTTY(w)
+
+	var done chan struct{}
 	var wg sync.WaitGroup
 
-	wg.Go(func() {
-		frame := 0
-		ticker := time.NewTicker(80 * time.Millisecond)
-		defer ticker.Stop()
+	if interactive {
+		done = make(chan struct{})
+		wg.Go(func() {
+			frame := 0
+			ticker := time.NewTicker(80 * time.Millisecond)
+			defer ticker.Stop()
 
-		for {
-			fmt.Fprintf(w, "\r  %s %s",
-				spinnerStyle.Render(spinnerFrames[frame%len(spinnerFrames)]),
-				msg,
-			)
+			for {
+				fmt.Fprintf(w, "\r  %s %s",
+					spinnerStyle.Render(spinnerFrames[frame%len(spinnerFrames)]),
+					msg,
+				)
 
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				frame++
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
+					frame++
+				}
 			}
-		}
-	})
+		})
+	}
 
 	start := time.Now()
 	err := fn()
 	elapsed := time.Since(start)
 
-	close(done)
-	wg.Wait()
+	if interactive {
+		close(done)
+		wg.Wait()
+		fmt.Fprintf(w, "\r")
+	}
 
-	fmt.Fprintf(w, "\r  %s %s %s\n",
+	fmt.Fprintf(w, "  %s %s %s\n",
 		Mark(err),
 		msg,
 		StepStyle.Render(fmt.Sprintf("(%s)", FormatDuration(elapsed))),
