@@ -3,6 +3,9 @@
 package pullcmder
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/masterblaster/pkg/mixtapes"
@@ -44,12 +47,7 @@ func NewPullCmd(configDirFn func() string) *cobra.Command {
 }
 
 func runPull(baseDir, rawRef string) error {
-	ui.Status("Pulling mixtape %q...", rawRef)
-
-	if err := mixtapes.Pull(baseDir, rawRef); err != nil {
-		return err
-	}
-
-	ui.Success("Mixtape %q pulled successfully", rawRef)
-	return nil
+	return ui.Step(os.Stderr, fmt.Sprintf("Pulling mixtape %q...", rawRef), func() error {
+		return mixtapes.Pull(baseDir, rawRef)
+	})
 }

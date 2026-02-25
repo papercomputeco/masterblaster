@@ -5,12 +5,12 @@ package statuscmder
 import (
 	"fmt"
 	"os"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/masterblaster/pkg/client"
 	"github.com/papercomputeco/masterblaster/pkg/daemon"
+	"github.com/papercomputeco/masterblaster/pkg/ui"
 )
 
 const statusLongDesc string = `Display the current state of a sandbox, including its name, state,
@@ -65,17 +65,15 @@ func printSandboxes(sandboxes []daemon.SandboxInfo) {
 		return
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "NAME\tSTATE\tMIXTAPE\tCPUs\tMEMORY\tSSH")
-	for _, sb := range sandboxes {
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
-			sb.Name,
-			sb.State,
-			sb.Mixtape,
-			sb.CPUs,
-			sb.Memory,
-			sb.SSHAddress,
-		)
+	tbl := &ui.Table{
+		Headers:  []string{"NAME", "STATE", "MIXTAPE", "CPUs", "MEMORY", "SSH"},
+		StateCol: 1,
 	}
-	_ = w.Flush()
+	for _, sb := range sandboxes {
+		tbl.Rows = append(tbl.Rows, []string{
+			sb.Name, sb.State, sb.Mixtape,
+			fmt.Sprintf("%d", sb.CPUs), sb.Memory, sb.SSHAddress,
+		})
+	}
+	tbl.Render(os.Stdout)
 }

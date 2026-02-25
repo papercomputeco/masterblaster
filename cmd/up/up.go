@@ -73,26 +73,43 @@ func runUp(baseDir, cfgPath string) error {
 		return err
 	}
 
-	ui.Status("Starting sandbox...")
-
 	c := client.New(baseDir)
-	resp, err := c.Up("", cfgPath)
-	if err != nil {
+	var resp *daemon.Response
+	if err := ui.Step(os.Stderr, "Starting sandbox...", func() error {
+		var stepErr error
+		resp, stepErr = c.Up("", cfgPath)
+		return stepErr
+	}); err != nil {
 		return err
 	}
 
 	if len(resp.Sandboxes) > 0 {
 		sb := resp.Sandboxes[0]
-		ui.Success("Sandbox %q started", sb.Name)
+		fmt.Fprintln(os.Stderr)
+		ui.Success("Sandbox %q launched", sb.Name)
+		fmt.Fprintln(os.Stderr)
 		if sb.SSHKeyPath != "" {
-			ui.Info("SSH:   ssh -i %s -p %d admin@127.0.0.1", sb.SSHKeyPath, sb.SSHPort)
+			short := shortenHome(sb.SSHKeyPath)
+			ui.Info("ssh -p %d -i %s admin@127.0.0.1", sb.SSHPort, short)
 		} else {
-			ui.Info("SSH:   ssh -p %d admin@127.0.0.1", sb.SSHPort)
+			ui.Info("ssh -p %d admin@127.0.0.1", sb.SSHPort)
 		}
-		ui.Info("Or:    mb ssh %s", sb.Name)
+		ui.Info("mb ssh %s", sb.Name)
 	}
 
 	return nil
+}
+
+// shortenHome replaces the user's home directory prefix with ~.
+func shortenHome(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if len(path) > len(home) && path[:len(home)] == home {
+		return "~" + path[len(home):]
+	}
+	return path
 }
 
 // ensureDaemon starts the daemon if it's not already running.
@@ -101,34 +118,34 @@ func ensureDaemon(baseDir string) error {
 		return nil
 	}
 
-	ui.Status("Starting daemon...")
-
-	mbBin, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("finding mb binary: %w", err)
-	}
-
-	cmd := exec.Command(mbBin, "serve")
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true,
-	}
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting daemon: %w", err)
-	}
-
-	if err := cmd.Process.Release(); err != nil {
-		return fmt.Errorf("releasing daemon process: %w", err)
-	}
-
-	for i := 0; i < 30; i++ {
-		time.Sleep(200 * time.Millisecond)
-		if daemon.IsRunning(baseDir) {
-			return nil
+	return ui.Step(os.Stderr, "Starting daemon...", func() error {
+		mbBin, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("finding mb binary: %w", err)
 		}
-	}
 
-	return fmt.Errorf("daemon did not start within 6 seconds")
+		cmd := exec.Command(mbBin, "serve")
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Setsid: true,
+		}
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("starting daemon: %w", err)
+		}
+
+		if err := cmd.Process.Release(); err != nil {
+			return fmt.Errorf("releasing daemon process: %w", err)
+		}
+
+		for i := 0; i < 30; i++ {
+			time.Sleep(200 * time.Millisecond)
+			if daemon.IsRunning(baseDir) {
+				return nil
+			}
+		}
+
+		return fmt.Errorf("daemon did not start within 6 seconds")
+	})
 }
