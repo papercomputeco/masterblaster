@@ -68,11 +68,12 @@ func (t *Table) Render(w io.Writer) {
 				break
 			}
 			padded := padRight(cell, widths[i])
-			if i == t.StateCol {
+			switch i {
+			case t.StateCol:
 				parts = append(parts, StateStyle(cell).Render(padded))
-			} else if i == 0 {
+			case 0:
 				parts = append(parts, NameStyle.Render(padded))
-			} else {
+			default:
 				parts = append(parts, padded)
 			}
 		}
