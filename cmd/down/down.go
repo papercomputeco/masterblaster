@@ -3,6 +3,8 @@
 package downcmder
 
 import (
+	"os"
+
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/masterblaster/pkg/daemon/client"
@@ -53,13 +55,8 @@ func runDown(baseDir, name string, force bool) error {
 	}
 
 	c := client.New(baseDir)
-
-	ui.Status("Stopping sandbox...")
-	_, err := c.Down(name, force)
-	if err != nil {
+	return ui.Step(os.Stderr, "Stopping sandbox...", func() error {
+		_, err := c.Down(name, force)
 		return err
-	}
-
-	ui.Success("Sandbox stopped")
-	return nil
+	})
 }

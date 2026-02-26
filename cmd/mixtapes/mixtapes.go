@@ -3,6 +3,9 @@
 package mixtapescmder
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/masterblaster/pkg/mixtapes"
@@ -71,10 +74,7 @@ func runMixtapesLs(baseDir string) error {
 }
 
 func runMixtapesPull(baseDir, name string) error {
-	ui.Status("Pulling mixtape %q...", name)
-	if err := mixtapes.Pull(baseDir, name); err != nil {
-		return err
-	}
-	ui.Success("Mixtape %q pulled", name)
-	return nil
+	return ui.Step(os.Stderr, fmt.Sprintf("Pulling mixtape %q...", name), func() error {
+		return mixtapes.Pull(baseDir, name)
+	})
 }

@@ -4,9 +4,11 @@ package versioncmder
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/papercomputeco/masterblaster/pkg/ui"
 	"github.com/papercomputeco/masterblaster/pkg/utils"
 )
 
@@ -28,6 +30,8 @@ func NewVersionCmd() *cobra.Command {
 }
 
 func (c *VersionCommander) run() error {
-	fmt.Printf("Version: %s\nSha: %s\nBuilt at: %s\n", utils.Version, utils.Sha, utils.Buildtime)
+	fmt.Fprintln(os.Stderr, ui.Label("Version:", utils.Version))
+	fmt.Fprintln(os.Stderr, ui.Label("Sha:    ", utils.Sha))
+	fmt.Fprintln(os.Stderr, ui.Label("Built:  ", utils.Buildtime))
 	return nil
 }

@@ -8,9 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/google/go-containerregistry/pkg/name"
+
+	"github.com/papercomputeco/masterblaster/pkg/ui"
 )
 
 // DefaultRegistry is the default OCI registry for mixtapes.
@@ -131,19 +132,21 @@ func tagFromRef(ref name.Reference) string {
 	return "latest"
 }
 
-// PrintList writes a formatted table of mixtapes to stdout.
+// PrintList writes a styled table of mixtapes to stdout.
 func PrintList(mixtapes []MixtapeInfo) {
 	if len(mixtapes) == 0 {
 		fmt.Println("No mixtapes found. Pull one with: mb pull <name>")
 		return
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "NAME\tTAG\tSIZE")
-	for _, m := range mixtapes {
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", m.Name, m.Tag, formatSize(m.Size))
+	tbl := &ui.Table{
+		Headers:  []string{"NAME", "TAG", "SIZE"},
+		StateCol: -1,
 	}
-	_ = w.Flush()
+	for _, m := range mixtapes {
+		tbl.Rows = append(tbl.Rows, []string{m.Name, m.Tag, formatSize(m.Size)})
+	}
+	tbl.Render(os.Stdout)
 }
 
 func formatSize(bytes int64) string {

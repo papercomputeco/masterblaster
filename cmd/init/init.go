@@ -48,7 +48,7 @@ func runInit() error {
 	jcardPath := filepath.Join(cwd, "jcard.toml")
 
 	if _, err := os.Stat(jcardPath); err == nil {
-		ui.Warn("jcard.toml already exists in the current directory")
+		ui.Warn("jcard.toml already exists in this directory.")
 		return nil
 	}
 
@@ -58,6 +58,6 @@ func runInit() error {
 	}
 
 	ui.Success("Created jcard.toml")
-	ui.Info("Edit the configuration, then run: mb up")
+	ui.Info("Edit the file then run `mb up` to boot a sandbox.")
 	return nil
 }

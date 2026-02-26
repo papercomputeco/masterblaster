@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/papercomputeco/masterblaster/pkg/daemon"
 	"github.com/papercomputeco/masterblaster/pkg/daemon/client"
 	"github.com/papercomputeco/masterblaster/pkg/ui"
 )
@@ -69,24 +71,41 @@ func runUp(baseDir, cfgPath string) error {
 		return err
 	}
 
-	ui.Status("Starting sandbox...")
-
 	c := client.New(baseDir)
-	resp, err := c.Up("", cfgPath)
-	if err != nil {
+	var resp *daemon.Response
+	if err := ui.Step(os.Stderr, "Starting sandbox...", func() error {
+		var stepErr error
+		resp, stepErr = c.Up("", cfgPath)
+		return stepErr
+	}); err != nil {
 		return err
 	}
 
 	if len(resp.Sandboxes) > 0 {
 		sb := resp.Sandboxes[0]
-		ui.Success("Sandbox %q started", sb.Name)
+		fmt.Fprintln(os.Stderr)
+		ui.Success("Sandbox %q launched", sb.Name)
+		fmt.Fprintln(os.Stderr)
 		if sb.SSHKeyPath != "" {
-			ui.Info("SSH:   ssh -i %s -p %d admin@127.0.0.1", sb.SSHKeyPath, sb.SSHPort)
+			short := shortenHome(sb.SSHKeyPath)
+			ui.Info("ssh -p %d -i %s admin@127.0.0.1", sb.SSHPort, short)
 		} else {
-			ui.Info("SSH:   ssh -p %d admin@127.0.0.1", sb.SSHPort)
+			ui.Info("ssh -p %d admin@127.0.0.1", sb.SSHPort)
 		}
-		ui.Info("Or:    mb ssh %s", sb.Name)
+		ui.Info("mb ssh %s", sb.Name)
 	}
 
 	return nil
+}
+
+// shortenHome replaces the user's home directory prefix with ~.
+func shortenHome(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if strings.HasPrefix(path, home) {
+		return "~" + strings.TrimPrefix(path, home)
+	}
+	return path
 }

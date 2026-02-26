@@ -81,12 +81,8 @@ func runDestroy(baseDir, name string, yes, force bool) error {
 		_, _ = c.Down(name, true)
 	}
 
-	ui.Status("Destroying sandbox...")
-	_, err := c.Destroy(name)
-	if err != nil {
+	return ui.Step(os.Stderr, "Destroying sandbox...", func() error {
+		_, err := c.Destroy(name)
 		return err
-	}
-
-	ui.Success("Sandbox destroyed")
-	return nil
+	})
 }

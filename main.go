@@ -1,10 +1,11 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/papercomputeco/masterblaster/pkg/ui"
 
 	destroycmder "github.com/papercomputeco/masterblaster/cmd/destroy"
 	downcmder "github.com/papercomputeco/masterblaster/cmd/down"
@@ -66,7 +67,7 @@ func main() {
 
 	err := cmd.Execute()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		ui.Error("%v", err)
 		os.Exit(1)
 	}
 }
