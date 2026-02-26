@@ -82,7 +82,7 @@ func Box(w io.Writer, content string, borderColor lipgloss.Color) {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(borderColor).
 		Padding(1, 2)
-	fmt.Fprintln(w, boxStyle.Render(content))
+	_, _ = fmt.Fprintln(w, boxStyle.Render(content))
 }
 
 // Label renders a cyan label followed by a value, for use inside info panels.

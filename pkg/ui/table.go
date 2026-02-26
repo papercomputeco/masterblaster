@@ -58,7 +58,7 @@ func (t *Table) Render(w io.Writer) {
 	for i, h := range t.Headers {
 		headerParts = append(headerParts, HeaderStyle.Render(padRight(h, widths[i])))
 	}
-	fmt.Fprintln(w, strings.Join(headerParts, "  "))
+	_, _ = fmt.Fprintln(w, strings.Join(headerParts, "  "))
 
 	// Data rows.
 	for _, row := range t.Rows {
@@ -77,7 +77,7 @@ func (t *Table) Render(w io.Writer) {
 				parts = append(parts, padded)
 			}
 		}
-		fmt.Fprintln(w, strings.Join(parts, "  "))
+		_, _ = fmt.Fprintln(w, strings.Join(parts, "  "))
 	}
 }
 

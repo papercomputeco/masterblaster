@@ -42,7 +42,7 @@ func Step(w io.Writer, msg string, fn func() error) error {
 			defer ticker.Stop()
 
 			for {
-				fmt.Fprintf(w, "\r  %s %s",
+				_, _ = fmt.Fprintf(w, "\r  %s %s",
 					spinnerStyle.Render(spinnerFrames[frame%len(spinnerFrames)]),
 					msg,
 				)
@@ -64,10 +64,10 @@ func Step(w io.Writer, msg string, fn func() error) error {
 	if interactive {
 		close(done)
 		wg.Wait()
-		fmt.Fprintf(w, "\r")
+		_, _ = fmt.Fprintf(w, "\r")
 	}
 
-	fmt.Fprintf(w, "  %s %s %s\n",
+	_, _ = fmt.Fprintf(w, "  %s %s %s\n",
 		Mark(err),
 		msg,
 		StepStyle.Render(fmt.Sprintf("(%s)", FormatDuration(elapsed))),
