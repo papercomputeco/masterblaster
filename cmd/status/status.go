@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/papercomputeco/masterblaster/pkg/client"
 	"github.com/papercomputeco/masterblaster/pkg/daemon"
+	"github.com/papercomputeco/masterblaster/pkg/daemon/client"
 )
 
 const statusLongDesc string = `Display the current state of a sandbox, including its name, state,
@@ -49,6 +49,10 @@ func NewStatusCmd(configDirFn func() string) *cobra.Command {
 }
 
 func runStatus(baseDir, name string, all bool) error {
+	if err := client.EnsureDaemon(baseDir); err != nil {
+		return err
+	}
+
 	c := client.New(baseDir)
 	resp, err := c.Status(name, all)
 	if err != nil {

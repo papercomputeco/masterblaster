@@ -7,25 +7,39 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/papercomputeco/masterblaster/pkg/config"
 	"github.com/papercomputeco/masterblaster/pkg/vm"
+	"github.com/papercomputeco/masterblaster/pkg/vmhost"
 )
 
+// managedVM holds the daemon's per-VM state including the vmhost client
+// connection. Each running VM has a dedicated vmhost child process; the
+// daemon communicates with it over vmhost.sock.
+type managedVM struct {
+	inst    *vm.Instance
+	backend string         // "qemu" or "applevirt" (from state.json)
+	client  *vmhost.Client // connection to vmhost.sock (nil if stopped)
+	pid     int            // vmhost process PID (for liveness checks)
+}
+
 // Daemon is the long-lived Masterblaster service that manages sandbox VMs.
+// It acts as a multiplexer: each VM gets its own vmhost child process that
+// holds the hypervisor handle and control socket. The daemon spawns vmhost
+// processes, monitors their health, and routes CLI requests to them.
 type Daemon struct {
 	mu sync.RWMutex
 
-	// In-memory mapping of running/known VM instances.
-	vms map[string]*vm.Instance
-
-	// The hypervisor backend (QEMU, Apple Virt, etc.)
-	backend vm.Backend
+	// In-memory mapping of known VM instances and their vmhost connections.
+	vms map[string]*managedVM
 
 	// Base directory for all mb state (~/.mb/).
 	baseDir string
@@ -37,11 +51,12 @@ type Daemon struct {
 	logger *log.Logger
 }
 
-// New creates a new Daemon with the given backend and base directory.
-func New(backend vm.Backend, baseDir string) *Daemon {
+// New creates a new Daemon with the given base directory. The daemon no
+// longer takes a Backend parameter; instead, it spawns vmhost child
+// processes that use the appropriate backend internally.
+func New(baseDir string) *Daemon {
 	return &Daemon{
-		vms:     make(map[string]*vm.Instance),
-		backend: backend,
+		vms:     make(map[string]*managedVM),
 		baseDir: baseDir,
 		logger:  log.New(os.Stderr, "[mb-daemon] ", log.LstdFlags),
 	}
@@ -94,7 +109,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}()
 
 	// Load existing VMs into memory
-	d.loadExistingVMs(ctx)
+	d.loadExistingVMs()
 
 	d.logger.Printf("daemon started, listening on %s (PID %d)", sockPath, os.Getpid())
 
@@ -122,25 +137,87 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		d.logger.Println("shutting down daemon...")
+		d.logger.Println("shutting down daemon (vmhost processes will continue running)...")
 		return nil
 	case err := <-errCh:
 		return fmt.Errorf("accept error: %w", err)
 	}
 }
 
-// loadExistingVMs scans the vms directory and loads known instances.
-func (d *Daemon) loadExistingVMs(ctx context.Context) {
-	instances, err := d.backend.List(ctx)
+// loadExistingVMs scans the vms directory for surviving vmhost processes
+// and reconnects to them. This is called on daemon startup to recover
+// VMs that outlived the previous daemon instance.
+func (d *Daemon) loadExistingVMs() {
+	vmsDir := vm.VMsDir(d.baseDir)
+	entries, err := os.ReadDir(vmsDir)
 	if err != nil {
-		d.logger.Printf("warning: loading existing VMs: %v", err)
+		if !os.IsNotExist(err) {
+			d.logger.Printf("warning: scanning VMs directory: %v", err)
+		}
 		return
 	}
+
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for _, inst := range instances {
-		d.vms[inst.Name] = inst
-		d.logger.Printf("loaded existing VM: %s (state: %s)", inst.Name, inst.VMState)
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		name := entry.Name()
+		vmDir := filepath.Join(vmsDir, name)
+
+		// Read state.json to get backend type
+		state, err := vm.LoadStateFromDisk(d.baseDir, name)
+		if err != nil {
+			continue
+		}
+
+		inst := &vm.Instance{
+			Name:      state.Name,
+			Dir:       vmDir,
+			QMPSocket: filepath.Join(vmDir, "qmp.sock"),
+			SSHPort:   state.SSHPort,
+			VsockPort: state.VsockPort,
+		}
+
+		mvm := &managedVM{
+			inst:    inst,
+			backend: state.Backend,
+		}
+
+		// Check if a vmhost process is still alive
+		pidPath := inst.VMHostPIDPath()
+		pidData, err := os.ReadFile(pidPath)
+		if err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(pidData))); err == nil && pid > 0 {
+				if processAlive(pid) {
+					// Try to connect to the vmhost control socket
+					client := vmhost.NewClient(inst.VMHostSocketPath())
+					if client.IsAlive() {
+						mvm.client = client
+						mvm.pid = pid
+						inst.VMState = vm.StateRunning
+						d.logger.Printf("reconnected to running VM %q (vmhost PID %d)", name, pid)
+					} else {
+						// PID alive but socket not responding — stale
+						inst.VMState = vm.StateStopped
+						d.logger.Printf("found VM %q with stale vmhost (PID %d alive but socket unresponsive)", name, pid)
+					}
+				} else {
+					inst.VMState = vm.StateStopped
+					// Clean up stale PID/socket files
+					_ = os.Remove(pidPath)
+					_ = os.Remove(inst.VMHostSocketPath())
+				}
+			}
+		} else {
+			inst.VMState = vm.StateStopped
+		}
+
+		d.vms[name] = mvm
+		d.logger.Printf("loaded VM: %s (state: %s, backend: %s)", name, inst.VMState, state.Backend)
 	}
 }
 
@@ -203,203 +280,381 @@ func (d *Daemon) handleUp(ctx context.Context, req *Request) Response {
 		name = cfg.Name
 	}
 
+	// Determine backend
+	backend := resolveBackend(cfg)
+
 	// Check if a sandbox with this name already exists
 	d.mu.RLock()
 	existing, exists := d.vms[name]
 	d.mu.RUnlock()
 
 	if exists {
-		state, _ := d.backend.Status(ctx, existing)
+		// Check if the vmhost is still alive
+		state := d.queryVMState(existing)
+		existing.inst.VMState = state
 
 		switch state {
 		case vm.StateRunning:
-			// Already running -- idempotent no-op
-			existing.VMState = state
+			// Already running — idempotent no-op
 			d.logger.Printf("sandbox %q is already running", name)
 			return Response{
 				OK:        true,
-				Sandboxes: []SandboxInfo{instanceToInfo(existing)},
+				Sandboxes: []SandboxInfo{d.instanceToInfo(existing)},
 			}
 
 		default:
-			// Stopped -- re-boot the existing sandbox with its disk
-			existing.Config = cfg
-			if err := d.backend.Start(ctx, existing); err != nil {
-				// If the hypervisor started but post-boot failed, the
-				// backend sets VMState = StateRunning before returning.
-				// The instance is already in d.vms, so no map update is
-				// needed — just log so the user knows they can debug or retry.
-				if existing.VMState == vm.StateRunning {
-					d.logger.Printf("sandbox %q partially re-started (VM running, post-boot failed): %v", name, err)
-				}
-				return Response{Error: fmt.Sprintf("starting sandbox: %v", err)}
+			// Stopped — re-boot by spawning a new vmhost
+			existing.inst.Config = cfg
+			if err := d.spawnVMHost(ctx, existing, backend); err != nil {
+				return Response{Error: fmt.Sprintf("re-starting sandbox: %v", err)}
 			}
 
-			d.mu.Lock()
-			existing.VMState = vm.StateRunning
-			d.mu.Unlock()
-
+			existing.inst.VMState = vm.StateRunning
 			d.logger.Printf("sandbox %q re-started", name)
 			return Response{
 				OK:        true,
-				Sandboxes: []SandboxInfo{instanceToInfo(existing)},
+				Sandboxes: []SandboxInfo{d.instanceToInfo(existing)},
 			}
 		}
 	}
 
-	// New sandbox -- create from scratch
+	// New sandbox — prepare disk and spawn vmhost
 	inst := &vm.Instance{
 		Name:   name,
 		Config: cfg,
 	}
 
-	if err := d.backend.Up(ctx, inst); err != nil {
-		// If the hypervisor started but post-boot provisioning failed,
-		// the backend sets inst.VMState = StateRunning before returning.
-		// Register the instance so the user can debug with `mb ssh`,
-		// retry with `mb up`, or clean up with `mb destroy`. Without
-		// this, the daemon loses track of the running VM.
-		//
-		// Note: we check VMState rather than inst.PID because the Apple
-		// Virtualization.framework backend has no PID (the VM runs
-		// in-process). The backend is responsible for setting VMState
-		// to StateRunning once the hypervisor is up, before postBoot.
-		if inst.VMState == vm.StateRunning {
-			d.mu.Lock()
-			d.vms[name] = inst
-			d.mu.Unlock()
-			d.logger.Printf("sandbox %q partially started (VM running, post-boot failed): %v", name, err)
-		}
+	// Prepare the VM directory and disk (daemon-side, before vmhost spawn)
+	if err := d.prepareDisk(inst, cfg, backend); err != nil {
+		return Response{Error: fmt.Sprintf("preparing sandbox: %v", err)}
+	}
+
+	mvm := &managedVM{
+		inst:    inst,
+		backend: backend,
+	}
+
+	// Spawn the vmhost process
+	if err := d.spawnVMHost(ctx, mvm, backend); err != nil {
+		// Clean up the VM directory on spawn failure
+		vm.CleanupVMDir(inst)
 		return Response{Error: fmt.Sprintf("starting sandbox: %v", err)}
 	}
 
 	d.mu.Lock()
-	d.vms[name] = inst
+	d.vms[name] = mvm
 	d.mu.Unlock()
 
-	d.logger.Printf("sandbox %q started", name)
+	inst.VMState = vm.StateRunning
+	d.logger.Printf("sandbox %q started (backend=%s)", name, backend)
 
 	return Response{
 		OK: true,
 		Sandboxes: []SandboxInfo{
-			instanceToInfo(inst),
+			d.instanceToInfo(mvm),
 		},
 	}
 }
 
-func (d *Daemon) handleDown(ctx context.Context, req *Request) Response {
-	inst, err := d.resolveInstance(ctx, req.Name)
+// prepareDisk creates the VM directory and sets up the disk image based
+// on the backend type. This runs in the daemon before spawning vmhost.
+func (d *Daemon) prepareDisk(inst *vm.Instance, cfg *config.JcardConfig, backend string) error {
+	switch backend {
+	case "qemu":
+		// Use the default QEMU platform config for disk preparation
+		platform := defaultQEMUPlatform()
+		return vm.PrepareQEMUDisk(d.baseDir, inst, platform)
+	case "applevirt":
+		return vm.PrepareAppleVirtDisk(d.baseDir, inst)
+	default:
+		return fmt.Errorf("unknown backend: %s", backend)
+	}
+}
+
+// spawnVMHost launches a vmhost child process for the given VM. The vmhost
+// process boots the VM using the specified backend and exposes a control
+// socket. The daemon polls the socket until the vmhost signals readiness.
+func (d *Daemon) spawnVMHost(_ context.Context, mvm *managedVM, backend string) error {
+	inst := mvm.inst
+
+	// Clean up stale runtime files from previous runs
+	_ = os.Remove(inst.VMHostSocketPath())
+	_ = os.Remove(inst.VMHostPIDPath())
+
+	mbBin, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("finding mb binary: %w", err)
+	}
+
+	cmd := exec.Command(mbBin, "vmhost",
+		"--name", inst.Name,
+		"--backend", backend,
+		"--config-dir", d.baseDir,
+	)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid: true, // new session — survives daemon exit
+	}
+	// Don't capture stdout/stderr; vmhost logs to vmhost.log
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+
+	d.logger.Printf("spawning vmhost: %s", strings.Join(cmd.Args, " "))
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("spawning vmhost: %w", err)
+	}
+
+	// Release the process so the daemon doesn't wait on it
+	if err := cmd.Process.Release(); err != nil {
+		return fmt.Errorf("releasing vmhost process: %w", err)
+	}
+
+	// Poll vmhost.sock until it responds (same pattern as ensureDaemon)
+	client := vmhost.NewClient(inst.VMHostSocketPath())
+	deadline := time.Now().Add(120 * time.Second)
+	backoff := 200 * time.Millisecond
+	const maxBackoff = 2 * time.Second
+
+	for time.Now().Before(deadline) {
+		time.Sleep(backoff)
+
+		if client.IsAlive() {
+			// Get info to populate instance fields
+			resp, err := client.Info()
+			if err == nil {
+				inst.SSHPort = resp.SSHPort
+			}
+
+			mvm.client = client
+			// Read PID from vmhost.pid
+			if pidData, err := os.ReadFile(inst.VMHostPIDPath()); err == nil {
+				if pid, err := strconv.Atoi(strings.TrimSpace(string(pidData))); err == nil {
+					mvm.pid = pid
+				}
+			}
+
+			d.logger.Printf("vmhost for %q is ready (PID %d)", inst.Name, mvm.pid)
+			return nil
+		}
+
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
+
+	return fmt.Errorf("vmhost for %q did not become ready within 120s (check %s)", inst.Name, inst.VMHostLogPath())
+}
+
+func (d *Daemon) handleDown(_ context.Context, req *Request) Response {
+	mvm, err := d.resolveVM(req.Name)
 	if err != nil {
 		return Response{Error: err.Error()}
 	}
 
-	var downErr error
+	if mvm.client == nil {
+		mvm.inst.VMState = vm.StateStopped
+		return Response{OK: true}
+	}
+
+	var resp *vmhost.Response
+	var stopErr error
 	if req.Force {
-		downErr = d.backend.ForceDown(ctx, inst)
+		resp, stopErr = mvm.client.ForceStop()
 	} else {
-		downErr = d.backend.Down(ctx, inst, 30*1e9) // 30 seconds
+		resp, stopErr = mvm.client.Stop(30)
 	}
 
-	if downErr != nil {
-		return Response{Error: fmt.Sprintf("stopping sandbox: %v", downErr)}
+	if stopErr != nil {
+		return Response{Error: fmt.Sprintf("stopping sandbox: %v", stopErr)}
 	}
 
-	d.mu.Lock()
-	inst.VMState = vm.StateStopped
-	d.mu.Unlock()
+	_ = resp // response contains "stopping" state
 
-	d.logger.Printf("sandbox %q stopped", inst.Name)
+	// Wait for the vmhost process to exit
+	if mvm.pid > 0 {
+		deadline := time.Now().Add(45 * time.Second)
+		for time.Now().Before(deadline) {
+			if !processAlive(mvm.pid) {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+
+	mvm.inst.VMState = vm.StateStopped
+	mvm.client = nil
+	mvm.pid = 0
+
+	d.logger.Printf("sandbox %q stopped", mvm.inst.Name)
 	return Response{OK: true}
 }
 
-func (d *Daemon) handleStatus(ctx context.Context, req *Request) Response {
+func (d *Daemon) handleStatus(_ context.Context, req *Request) Response {
 	if req.All {
-		return d.handleList(ctx)
+		return d.handleList(context.Background())
 	}
 
-	inst, err := d.resolveInstance(ctx, req.Name)
+	mvm, err := d.resolveVM(req.Name)
 	if err != nil {
 		return Response{Error: err.Error()}
 	}
 
-	state, _ := d.backend.Status(ctx, inst)
-	inst.VMState = state
+	state := d.queryVMState(mvm)
+	mvm.inst.VMState = state
 
 	return Response{
 		OK:        true,
-		Sandboxes: []SandboxInfo{instanceToInfo(inst)},
+		Sandboxes: []SandboxInfo{d.instanceToInfo(mvm)},
 	}
 }
 
 func (d *Daemon) handleDestroy(ctx context.Context, req *Request) Response {
-	inst, err := d.resolveInstance(ctx, req.Name)
+	mvm, err := d.resolveVM(req.Name)
 	if err != nil {
 		return Response{Error: err.Error()}
 	}
 
-	if err := d.backend.Destroy(ctx, inst); err != nil {
-		return Response{Error: fmt.Sprintf("destroying sandbox: %v", err)}
+	// Stop the VM if it's running
+	state := d.queryVMState(mvm)
+	if state == vm.StateRunning && mvm.client != nil {
+		_, _ = mvm.client.Stop(10)
+		// Wait briefly for vmhost to exit
+		if mvm.pid > 0 {
+			deadline := time.Now().Add(15 * time.Second)
+			for time.Now().Before(deadline) {
+				if !processAlive(mvm.pid) {
+					break
+				}
+				time.Sleep(500 * time.Millisecond)
+			}
+			// Force kill if still alive
+			if processAlive(mvm.pid) {
+				if proc, err := os.FindProcess(mvm.pid); err == nil {
+					_ = proc.Signal(syscall.SIGKILL)
+				}
+			}
+		}
+	}
+
+	// Remove VM directory
+	if mvm.inst.Dir != "" {
+		if err := os.RemoveAll(mvm.inst.Dir); err != nil {
+			return Response{Error: fmt.Sprintf("removing VM directory: %v", err)}
+		}
 	}
 
 	d.mu.Lock()
-	delete(d.vms, inst.Name)
+	delete(d.vms, mvm.inst.Name)
 	d.mu.Unlock()
 
-	d.logger.Printf("sandbox %q destroyed", inst.Name)
+	d.logger.Printf("sandbox %q destroyed", mvm.inst.Name)
 	return Response{OK: true}
 }
 
-func (d *Daemon) handleList(ctx context.Context) Response {
-	instances, err := d.backend.List(ctx)
-	if err != nil {
-		return Response{Error: fmt.Sprintf("listing sandboxes: %v", err)}
-	}
+func (d *Daemon) handleList(_ context.Context) Response {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
 
-	infos := make([]SandboxInfo, 0, len(instances))
-	for _, inst := range instances {
-		infos = append(infos, instanceToInfo(inst))
+	infos := make([]SandboxInfo, 0, len(d.vms))
+	for _, mvm := range d.vms {
+		state := d.queryVMState(mvm)
+		mvm.inst.VMState = state
+		infos = append(infos, d.instanceToInfo(mvm))
 	}
 
 	return Response{OK: true, Sandboxes: infos}
 }
 
-// resolveInstance finds an instance by name. If no name is given, it looks
-// for a single sandbox (in any state) and returns it. When multiple sandboxes
-// exist and no name is provided, it returns an error listing the options.
-func (d *Daemon) resolveInstance(ctx context.Context, name string) (*vm.Instance, error) {
-	if name != "" {
-		d.mu.RLock()
-		inst, ok := d.vms[name]
-		d.mu.RUnlock()
-		if ok {
-			// Refresh state from the backend
-			state, _ := d.backend.Status(ctx, inst)
-			inst.VMState = state
-			return inst, nil
+// queryVMState determines the current state of a VM by checking its
+// vmhost process liveness and control socket responsiveness.
+func (d *Daemon) queryVMState(mvm *managedVM) vm.State {
+	// If we have a client, try to query it
+	if mvm.client != nil {
+		resp, err := mvm.client.Status()
+		if err == nil {
+			switch resp.State {
+			case "running":
+				return vm.StateRunning
+			case "error":
+				return vm.StateError
+			default:
+				return vm.StateStopped
+			}
 		}
-		// Try loading from disk
-		inst, err := d.backend.LoadInstance(name)
-		if err != nil {
-			return nil, fmt.Errorf("sandbox %q not found: %w", name, err)
-		}
-		state, _ := d.backend.Status(ctx, inst)
-		inst.VMState = state
-		return inst, nil
+		// Socket error — vmhost may have crashed
+		mvm.client = nil
 	}
 
-	// No name: find a single sandbox (any state).
+	// Check PID liveness as fallback
+	if mvm.pid > 0 && processAlive(mvm.pid) {
+		// PID alive but socket not responding — try to reconnect
+		client := vmhost.NewClient(mvm.inst.VMHostSocketPath())
+		if client.IsAlive() {
+			mvm.client = client
+			return vm.StateRunning
+		}
+		return vm.StateError
+	}
+
+	return vm.StateStopped
+}
+
+// resolveVM finds a managed VM by name. If no name is given, it looks
+// for a single sandbox and returns it. When multiple sandboxes exist and
+// no name is provided, it returns an error listing the options.
+func (d *Daemon) resolveVM(name string) (*managedVM, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
+	if name != "" {
+		mvm, ok := d.vms[name]
+		if ok {
+			return mvm, nil
+		}
+
+		// Try loading from disk (VM may have been created by a previous daemon)
+		state, err := vm.LoadStateFromDisk(d.baseDir, name)
+		if err != nil {
+			return nil, fmt.Errorf("sandbox %q not found", name)
+		}
+
+		inst, err := vm.LoadInstanceFromDisk(d.baseDir, name)
+		if err != nil {
+			return nil, fmt.Errorf("loading sandbox %q: %w", name, err)
+		}
+
+		mvm = &managedVM{
+			inst:    inst,
+			backend: state.Backend,
+		}
+
+		// Check if vmhost is alive
+		pidPath := inst.VMHostPIDPath()
+		if pidData, err := os.ReadFile(pidPath); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(pidData))); err == nil && processAlive(pid) {
+				client := vmhost.NewClient(inst.VMHostSocketPath())
+				if client.IsAlive() {
+					mvm.client = client
+					mvm.pid = pid
+					inst.VMState = vm.StateRunning
+				}
+			}
+		}
+
+		// Register in the map (upgrade from RLock would be needed, but
+		// this is a rare path — accept the small race)
+		return mvm, nil
+	}
+
+	// No name: find a single sandbox
 	if len(d.vms) == 0 {
 		return nil, fmt.Errorf("no sandboxes found")
 	}
 
 	if len(d.vms) == 1 {
-		for _, inst := range d.vms {
-			state, _ := d.backend.Status(ctx, inst)
-			inst.VMState = state
-			return inst, nil
+		for _, mvm := range d.vms {
+			return mvm, nil
 		}
 	}
 
@@ -410,7 +665,8 @@ func (d *Daemon) resolveInstance(ctx context.Context, name string) (*vm.Instance
 	return nil, fmt.Errorf("multiple sandboxes exist, please specify one: %v", names)
 }
 
-func instanceToInfo(inst *vm.Instance) SandboxInfo {
+func (d *Daemon) instanceToInfo(mvm *managedVM) SandboxInfo {
+	inst := mvm.inst
 	info := SandboxInfo{
 		Name:       inst.Name,
 		State:      string(inst.VMState),
@@ -432,6 +688,36 @@ func instanceToInfo(inst *vm.Instance) SandboxInfo {
 	}
 
 	return info
+}
+
+// resolveBackend determines the backend type for a VM. Precedence:
+//  1. MB_BACKEND environment variable
+//  2. Platform default: "applevirt" on darwin/arm64, "qemu" elsewhere
+func resolveBackend(_ *config.JcardConfig) string {
+	if env := os.Getenv("MB_BACKEND"); env != "" {
+		return env
+	}
+	return vm.DefaultBackend()
+}
+
+// defaultQEMUPlatform returns a minimal QEMU platform config sufficient
+// for disk preparation. The vmhost process uses the full platform config.
+func defaultQEMUPlatform() *vm.QEMUPlatformConfig {
+	return &vm.QEMUPlatformConfig{
+		DirectKernelBoot: true,
+	}
+}
+
+// processAlive reports whether a process with the given PID is still running.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
 }
 
 // IsRunning checks if the daemon is running by attempting to connect

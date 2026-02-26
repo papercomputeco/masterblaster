@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/papercomputeco/masterblaster/pkg/client"
+	"github.com/papercomputeco/masterblaster/pkg/daemon/client"
 	"github.com/papercomputeco/masterblaster/pkg/ssh"
 	"github.com/papercomputeco/masterblaster/pkg/ui"
 )
@@ -50,6 +50,10 @@ func NewSSHCmd(configDirFn func() string, verboseFn func() bool) *cobra.Command 
 }
 
 func runSSH(baseDir, name, user string, verbose bool) error {
+	if err := client.EnsureDaemon(baseDir); err != nil {
+		return err
+	}
+
 	c := client.New(baseDir)
 	resp, err := c.Status(name, false)
 	if err != nil {

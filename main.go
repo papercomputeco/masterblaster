@@ -17,6 +17,7 @@ import (
 	statuscmder "github.com/papercomputeco/masterblaster/cmd/status"
 	upcmder "github.com/papercomputeco/masterblaster/cmd/up"
 	versioncmder "github.com/papercomputeco/masterblaster/cmd/version"
+	vmhostcmder "github.com/papercomputeco/masterblaster/cmd/vmhost"
 	"github.com/papercomputeco/masterblaster/pkg/mbconfig"
 )
 
@@ -55,6 +56,7 @@ func NewMbCmd() *cobra.Command {
 	cmd.AddCommand(mixtapescmder.NewMixtapesCmd(mbconfig.ConfigDir))
 	cmd.AddCommand(pullcmder.NewPullCmd(mbconfig.ConfigDir))
 	cmd.AddCommand(versioncmder.NewVersionCmd())
+	cmd.AddCommand(vmhostcmder.NewVMHostCmd(mbconfig.ConfigDir))
 
 	return cmd
 }
