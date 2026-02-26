@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/papercomputeco/masterblaster/pkg/client"
+	"github.com/papercomputeco/masterblaster/pkg/daemon/client"
 	"github.com/papercomputeco/masterblaster/pkg/ui"
 )
 
@@ -38,6 +38,10 @@ func NewListCmd(configDirFn func() string) *cobra.Command {
 }
 
 func runList(baseDir string) error {
+	if err := client.EnsureDaemon(baseDir); err != nil {
+		return err
+	}
+
 	c := client.New(baseDir)
 	resp, err := c.List()
 	if err != nil {

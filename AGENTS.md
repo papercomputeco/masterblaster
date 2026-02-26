@@ -6,11 +6,11 @@ Guidelines for AI coding agents working on the Masterblaster codebase.
 
 Masterblaster (`mb`) is a Go CLI and daemon for managing StereOS-based
 AI agent sandbox VMs. It targets aarch64 guests using HVF acceleration on
-Apple Silicon Macs (QEMU today, Apple Virtualization.framework in the future).
+Apple Silicon Macs with two backends: QEMU and Apple Virtualization.framework.
 
 The tool communicates with `stereosd` inside StereOS guests over vsock for
 secret injection, shared directory mounting, health monitoring, and graceful
-shutdown. Agent harnesses (Claude Code, OpenCode, Gemini CLI) are managed by
+shutdown. Agent harnesses (Claude Code, Claude Code, Gemini CLI) are managed by
 `agentd` inside the guest.
 
 See SPEC.md for the full RFC specification.
@@ -30,14 +30,24 @@ environment with QEMU, Go, and build tools. Use `nix develop` or direnv.
 
 ## Architecture
 
-The codebase follows the daemon + CLI client pattern:
+The codebase follows the daemon + CLI client + vmhost child process pattern:
 
 ```
 mb CLI  --[JSON-RPC over $config-dir/mb.sock]--> mb daemon (mb serve)
-  daemon --[QMP unix socket]-------------------> QEMU process
-  daemon --[vsock CID:3:1024]------------------> stereosd (guest)
-    stereosd --[tmpfs/unix socket]-------------> agentd (guest)
+  daemon --[JSON-RPC over vmhost.sock]---------> mb vmhost (one per VM)
+    vmhost --[QMP unix socket]----------------> QEMU process (child of vmhost)
+    vmhost --[in-process]---------------------> Apple Virt VM (Vz framework)
+    vmhost --[vsock/tcp]----------------------> stereosd (guest)
+      stereosd --[tmpfs/unix socket]----------> agentd (guest)
 ```
+
+Each VM gets a dedicated `vmhost` child process (`mb vmhost --name <name>
+--backend <qemu|applevirt>`) that holds the hypervisor handle and exposes a
+control socket (`vmhost.sock`). The daemon spawns vmhost processes, monitors
+their health via PID liveness checks, and routes CLI requests to them. This
+architecture enables crash isolation (one VM crashing doesn't affect others),
+daemon restart survival (vmhost processes outlive the daemon), and mixed
+backends (QEMU and Apple Virt VMs running simultaneously).
 
 The default config directory is `$XDG_CONFIG_HOME/mb` (falls back to
 `~/.config/mb`). It can be overridden via `--config-dir` flag, `MB_CONFIG_DIR`
@@ -59,8 +69,19 @@ file > default.
 
 - **`cmd/<name>/`** -- Each subcommand gets its own package directory following
   the `New<Name>Cmd()` factory pattern. Packages: `serve`, `init`, `up`,
-  `down`, `status`, `destroy`, `ssh`, `list`, `mixtapes`. Commands are thin
-  wrappers that delegate to the daemon via `pkg/client/`.
+  `down`, `status`, `destroy`, `ssh`, `list`, `mixtapes`, `vmhost`. Commands
+  are thin wrappers that delegate to the daemon via `pkg/client/`.
+
+- **`cmd/vmhost/`** -- Hidden `mb vmhost` subcommand. The daemon spawns one
+  vmhost process per VM; each holds the hypervisor handle and exposes a
+  control socket. `vmhost.go` defines `NewVMHostCmd()`, the `runVMHost()`
+  entrypoint, the `qemuController` adapter (implements `vmhost.VMController`),
+  and the `bootVM()` dispatcher. Platform-specific files provide
+  `bootAppleVirt()` and `getPlatformConfig()`:
+  - `platform_darwin_arm64.go` -- Apple Virt controller + QEMU HVF config.
+  - `platform_linux.go` -- QEMU KVM config.
+  - `platform_darwin_amd64.go` -- Stub (unsupported).
+  - `platform_other.go` -- Stub (unsupported).
 
 - **`pkg/config/`** -- jcard.toml config parsing, validation, and defaults.
   `config.go` defines `JcardConfig` and `Load()`. `expand.go` handles
@@ -68,29 +89,50 @@ file > default.
   default jcard.toml template. Always use `Load()` to get a validated config.
 
 - **`pkg/daemon/`** -- The long-lived Masterblaster daemon. `daemon.go` defines
-  the `Daemon` struct with a `sync.RWMutex`-protected VM map, backend, and
-  unix socket listener. `rpc.go` defines the JSON-RPC wire format (`Request`,
+  the `Daemon` struct with a `sync.RWMutex`-protected VM map and unix socket
+  listener. Each VM is tracked as a `managedVM` struct containing the vmhost
+  client connection. The daemon no longer holds a `Backend` directly; it
+  spawns vmhost child processes and delegates all VM operations to them via
+  `pkg/vmhost.Client`. `rpc.go` defines the JSON-RPC wire format (`Request`,
   `Response`, `SandboxInfo`). The daemon manages `$config-dir/mb.sock` for CLI
   communication and `$config-dir/daemon.pid` for liveness.
 
-- **`pkg/client/`** -- Thin JSON-RPC client for CLI commands to talk to the
-  daemon. Provides `Up()`, `Down()`, `Status()`, `Destroy()`, `List()`.
+- **`pkg/daemon/client/`** -- Thin JSON-RPC client for CLI commands to talk to
+  the daemon. Provides `Up()`, `Down()`, `Status()`, `Destroy()`, `List()`.
+  Also provides `EnsureDaemon(baseDir)` which auto-starts the daemon if not
+  running (fork + setsid + poll). All CLI commands (`up`, `status`, `list`,
+  `ssh`, `down`, `destroy`) call `EnsureDaemon` automatically so the daemon
+  can rediscover running vmhost processes that may have survived a daemon
+  restart.
 
 - **`pkg/vm/`** -- VM lifecycle management.
   - `backend.go` defines the `Backend` interface (`Up`, `Start`, `Down`,
     `ForceDown`, `Destroy`, `Status`, `List`, `LoadInstance`).
   - `platform.go` defines `QEMUPlatformConfig` -- platform-specific settings
-    (accelerator, binary, EFI paths, control plane mode) injected into the
-    QEMU backend at construction time.
+    (accelerator, binary, EFI paths, control plane mode, vsock device,
+    direct kernel boot, disk AIO/cache) injected into the QEMU backend at
+    construction time.
   - `qemu.go` is the QEMU backend. It uses `QEMUPlatformConfig` to build
     QEMU args with the correct accelerator (`hvf`/`kvm`), binary, and EFI
-    firmware paths. Post-boot it connects to stereosd via the platform's
-    control plane transport to inject secrets and mount directories.
+    firmware paths. QEMU runs as a child process of vmhost (no `-daemonize`).
+    Post-boot it connects to stereosd via the platform's control plane
+    transport to inject secrets and mount directories. Exposes `Boot()` and
+    `WaitQEMU()` methods for vmhost use.
+  - `applevirt.go` is the Apple Virtualization.framework backend
+    (darwin/arm64 only, uses `github.com/Code-Hex/vz/v3`). VMs run in-process
+    with an in-memory `live` map. Exposes `Boot()` and `WaitVM()` methods
+    for vmhost use.
   - `qmp.go` is a minimal QMP client for QEMU process control.
   - `image.go` handles mixtape resolution, qcow2 overlay creation, and raw
     image copying/resizing.
   - `state.go` persists VM metadata as `state.json`.
-  - `types.go` defines `State`, `Instance`, and path helpers.
+  - `types.go` defines `State`, `Instance`, and path helpers (including
+    `VMHostPIDPath()`, `VMHostSocketPath()`, `VMHostLogPath()`).
+  - `prepare.go` contains daemon-side disk preparation functions run before
+    spawning vmhost: `PrepareQEMUDisk()`, `LoadInstanceFromDisk()`,
+    `LoadStateFromDisk()`, `CleanupVMDir()`, `ResolveBackend()`.
+  - `prepare_darwin_arm64.go` -- `PrepareAppleVirtDisk()` implementation.
+  - `prepare_other.go` -- `PrepareAppleVirtDisk()` stub (unsupported).
   - `backend_darwin_arm64.go` -- `NewPlatformBackend()` for macOS/Apple Silicon.
     Configures QEMU with `accel=hvf` and `ControlPlaneMode: "tcp"` (no native
     vsock on macOS/HVF).
@@ -98,11 +140,20 @@ file > default.
     with `accel=kvm` and `ControlPlaneMode: "vsock"` (native `vhost-vsock-pci`).
   - `backend_other.go` -- Returns an error on unsupported platforms.
 
+- **`pkg/vmhost/`** -- Control protocol between the daemon and vmhost processes.
+  - `protocol.go` defines `Request`/`Response` wire types and method constants
+    (`status`, `stop`, `force_stop`, `info`).
+  - `server.go` defines `VMController` interface (implemented by backend
+    adapters in `cmd/vmhost/`), and `Server` which listens on `vmhost.sock`,
+    dispatches JSON-RPC requests, and monitors VM exit via `controller.Wait()`.
+  - `client.go` provides `Client` used by the daemon to talk to vmhost
+    processes: `Status()`, `Stop()`, `ForceStop()`, `Info()`, `IsAlive()`.
+
 - **`pkg/vsock/`** -- Host-side client for communicating with stereosd.
   - `transport.go` defines the `Transport` interface, abstracting the
     connection mechanism. `TCPTransport` is the current implementation
     (used on macOS/HVF). `VsockTransport` (AF_VSOCK, for Linux/KVM) is
-    planned.
+    planned. Used by vmhost internally.
   - `client.go` provides `Connect(transport, timeout)` and message methods:
     `Ping()`, `InjectSecret()`, `Mount()`, `Shutdown()`, `GetHealth()`,
     `WaitForReady()`.
@@ -130,22 +181,28 @@ file > default.
    `NewPlatformBackend()` with build tags enables future backends (Apple Virt
    framework, KVM/libvirt).
 
-3. **Vsock for guest control plane.** stereosd inside the guest is the bridge.
+3. **Vmhost child process pattern.** Each VM gets a dedicated `mb vmhost`
+   child process that holds the hypervisor handle and exposes a control
+   socket (`vmhost.sock`). The daemon spawns vmhost processes and routes
+   CLI requests to them via `pkg/vmhost.Client`. This provides crash
+   isolation, daemon restart survival, and mixed backend support.
+
+4. **Vsock for guest control plane.** stereosd inside the guest is the bridge.
    Secrets are injected over vsock (never baked into images). Shared directories
    are mounted via vsock mount commands. Shutdown is coordinated through vsock.
 
-4. **jcard.toml is the config format.** Defines mixtape, resources, network
+5. **jcard.toml is the config format.** Defines mixtape, resources, network
    (with port forwards and egress allowlists), shared directories, secrets,
    and agent configuration. The `[agent]` section is passed through to agentd.
 
-5. **SSH uses process replacement.** `mb ssh` calls `syscall.Exec` for correct
+6. **SSH uses process replacement.** `mb ssh` calls `syscall.Exec` for correct
    terminal handling. Do not change to a Go SSH library.
 
-6. **Config defaults are generous.** Most fields in jcard.toml are optional.
+7. **Config defaults are generous.** Most fields in jcard.toml are optional.
    `applyDefaults()` fills in sensible values (2 CPUs, 4GiB RAM, 20GiB disk,
    NAT networking, claude-code harness).
 
-7. **No cloud-init.** StereOS images are pre-built with stereosd and agentd.
+8. **No cloud-init.** StereOS images are pre-built with stereosd and agentd.
    Runtime provisioning (secrets, mounts, agent config) happens over vsock,
    not via cloud-init ISOs.
 
@@ -187,7 +244,10 @@ file > default.
         ├── efi-vars.fd              # Writable EFI variable store (64MB)
         ├── qmp.sock                 # QMP unix socket (exists while VM runs)
         ├── serial.log               # Serial console output
-        └── qemu.pid                 # QEMU process ID
+        ├── qemu.pid                 # QEMU process ID
+        ├── vmhost.sock              # Vmhost control socket (runtime)
+        ├── vmhost.pid               # Vmhost process ID (runtime)
+        └── vmhost.log               # Vmhost process log output
 ```
 
 ## Common tasks
@@ -224,9 +284,14 @@ there from the `Instance` and `JcardConfig`. Platform-specific settings
 `QEMUPlatformConfig` -- edit the platform backend files
 (`backend_darwin_arm64.go`, `backend_linux.go`) to change those.
 
+Note: QEMU platform config for vmhost is also defined in
+`cmd/vmhost/platform_darwin_arm64.go` and `cmd/vmhost/platform_linux.go`
+via the `getPlatformConfig()` function.
+
 ### Debugging boot issues
 
 ```bash
+cat ~/.config/mb/vms/<name>/vmhost.log        # Vmhost process log
 cat ~/.config/mb/vms/<name>/serial.log        # Serial console output
 
 socat - UNIX-CONNECT:~/.config/mb/vms/<name>/qmp.sock

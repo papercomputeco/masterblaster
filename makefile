@@ -29,7 +29,7 @@ build-local: ## Builds local artifacts with local toolchain
 	go build -ldflags "$(LDFLAGS)" -o ./build/local/$(BIN_NAME) .
 
 .PHONY: apple-build
-apple-build: ## Apple: builds darwin/arm64 binary with codesign (requires macOS)
+apple-build: ## Apple: builds darwin/arm64 binary with codesign
 	$(call print-target)
 	@if [ "$$(uname -s)" != "Darwin" ]; then \
 		echo "Error: apple-build requires macOS (got $$(uname -s))"; \
@@ -40,9 +40,15 @@ apple-build: ## Apple: builds darwin/arm64 binary with codesign (requires macOS)
 	codesign --entitlements vz.entitlements -s - ./build/darwin/arm64/$(BIN_NAME)
 
 .PHONY: apple-install
-apple-install: apple-build ## Apple: builds, codesigns, and installs to GOBIN
+apple-install: build-local ## Apple: builds, installs to GOBIN, and codesigns binary
 	$(call print-target)
-	cp ./build/darwin/arm64/$(BIN_NAME) $(shell go env GOBIN)
+	@if [ "$$(uname -s)" != "Darwin" ]; then \
+		echo "Error: apple-install requires macOS (got $$(uname -s))"; \
+		exit 1; \
+	fi
+	rm -f $(shell go env GOBIN)/$(BIN_NAME)
+	cp ./build/local/$(BIN_NAME) $(shell go env GOBIN)
+	codesign --entitlements vz.entitlements -s - $(shell go env GOBIN)/$(BIN_NAME)
 
 .PHONY: upload-darwin-artifacts
 upload-darwin-artifacts: ## Uploads the install script

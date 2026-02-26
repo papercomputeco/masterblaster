@@ -20,9 +20,17 @@ import (
 // Platform-specific behavior (acceleration, vsock transport, EFI paths)
 // is configured via QEMUPlatformConfig, injected at construction time
 // by the build-tagged NewPlatformBackend() functions.
+//
+// In the vmhost architecture, each QEMU VM runs as a child process of
+// a dedicated vmhost process. QEMU no longer daemonizes; the vmhost
+// process owns its lifecycle.
 type QEMUBackend struct {
 	baseDir  string
 	platform *QEMUPlatformConfig
+
+	// qemuCmd is the running QEMU child process (set after Boot).
+	// Only used when running inside a vmhost process.
+	qemuCmd *exec.Cmd
 }
 
 // NewQEMUBackend creates a new QEMU backend with the given base directory
@@ -215,6 +223,46 @@ func (q *QEMUBackend) boot(ctx context.Context, inst *Instance, cfg *config.Jcar
 	}
 
 	return nil
+}
+
+// Boot is the exported entry point for vmhost processes. It allocates
+// ports, starts QEMU as a child process, and runs post-boot provisioning
+// (stereosd handshake, secret injection, shared directory mounting).
+// The VM directory and disk must already exist (created by the daemon).
+func (q *QEMUBackend) Boot(ctx context.Context, inst *Instance) error {
+	if inst.Dir == "" {
+		inst.Dir = filepath.Join(VMsDir(q.baseDir), inst.Name)
+	}
+
+	cfg := inst.Config
+	if cfg == nil {
+		var err error
+		cfg, err = config.Load(inst.JcardPath())
+		if err != nil {
+			return fmt.Errorf("loading config for %q: %w", inst.Name, err)
+		}
+		inst.Config = cfg
+	}
+
+	// Clean up stale runtime files from previous runs
+	_ = os.Remove(filepath.Join(inst.Dir, "qmp.sock"))
+	_ = os.Remove(inst.PIDFilePath())
+
+	var kernelArtifacts *KernelArtifacts
+	if q.platform.DirectKernelBoot {
+		kernelArtifacts = ResolveKernelArtifacts(q.baseDir, cfg.Mixtape)
+	}
+
+	return q.boot(ctx, inst, cfg, kernelArtifacts)
+}
+
+// WaitQEMU blocks until the QEMU child process exits. Returns nil on
+// clean exit, or an error if QEMU crashed.
+func (q *QEMUBackend) WaitQEMU() error {
+	if q.qemuCmd == nil {
+		return fmt.Errorf("QEMU process not started")
+	}
+	return q.qemuCmd.Wait()
 }
 
 // Down gracefully stops the VM.
@@ -415,8 +463,10 @@ func (q *QEMUBackend) LoadInstance(name string) (*Instance, error) {
 	return inst, nil
 }
 
-// startQEMU launches the QEMU system emulator as a daemon.
-func (q *QEMUBackend) startQEMU(ctx context.Context, inst *Instance, cfg *config.JcardConfig, kernelArtifacts *KernelArtifacts) error {
+// startQEMU launches the QEMU system emulator as a child process.
+// Unlike the previous daemonized approach, QEMU runs as a direct child
+// of this process. The vmhost process owns the QEMU lifecycle.
+func (q *QEMUBackend) startQEMU(_ context.Context, inst *Instance, cfg *config.JcardConfig, kernelArtifacts *KernelArtifacts) error {
 	qemuBin, err := exec.LookPath(q.platform.Binary)
 	if err != nil {
 		return fmt.Errorf("%s not found: %w\nInstall QEMU: brew install qemu", q.platform.Binary, err)
@@ -427,24 +477,16 @@ func (q *QEMUBackend) startQEMU(ctx context.Context, inst *Instance, cfg *config
 		return fmt.Errorf("building QEMU args: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, qemuBin, args...)
+	cmd := exec.Command(qemuBin, args...)
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
 
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("starting QEMU: %w\nCheck serial log: %s", err, inst.SerialLogPath())
 	}
 
-	// Read PID from pidfile
-	pidData, err := os.ReadFile(inst.PIDFilePath())
-	if err != nil {
-		return fmt.Errorf("reading QEMU PID file: %w", err)
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
-	if err != nil {
-		return fmt.Errorf("parsing QEMU PID: %w", err)
-	}
-	inst.PID = pid
+	q.qemuCmd = cmd
+	inst.PID = cmd.Process.Pid
 	inst.VMState = StateRunning
 
 	return nil
@@ -529,9 +571,6 @@ func (q *QEMUBackend) buildArgs(inst *Instance, cfg *config.JcardConfig, kernelA
 
 		// PID file
 		"-pidfile", inst.PIDFilePath(),
-
-		// Daemonize so mb returns immediately
-		"-daemonize",
 	)
 
 	// Networking

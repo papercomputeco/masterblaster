@@ -619,6 +619,67 @@ func (a *AppleVirtBackend) postBoot(
 	return nil
 }
 
+// Boot is the exported entry point for vmhost processes. It loads the
+// config, allocates ports, boots the VM, starts the SSH proxy, and runs
+// post-boot provisioning. The VM directory and disk must already exist
+// (created by the daemon via PrepareAppleVirtDisk).
+func (a *AppleVirtBackend) Boot(ctx context.Context, inst *Instance) error {
+	if inst.Dir == "" {
+		inst.Dir = filepath.Join(VMsDir(a.baseDir), inst.Name)
+	}
+
+	cfg := inst.Config
+	if cfg == nil {
+		var err error
+		cfg, err = config.Load(inst.JcardPath())
+		if err != nil {
+			return fmt.Errorf("loading config for %q: %w", inst.Name, err)
+		}
+		inst.Config = cfg
+	}
+
+	// Load the saved state for machine identity
+	state, err := loadState(inst.Dir)
+	if err != nil {
+		return fmt.Errorf("loading state for %q: %w", inst.Name, err)
+	}
+
+	// Resolve kernel artifacts for direct kernel boot
+	kernelArtifacts := ResolveKernelArtifacts(a.baseDir, cfg.Mixtape)
+
+	var efiVarStore *vz.EFIVariableStore
+	if kernelArtifacts == nil {
+		efiVarStore, err = vz.NewEFIVariableStore(inst.EFIVarsPath())
+		if err != nil {
+			return fmt.Errorf("loading EFI variable store: %w", err)
+		}
+	}
+
+	return a.boot(ctx, inst, cfg, efiVarStore, state.PlatformData, kernelArtifacts)
+}
+
+// WaitVM blocks until the VM exits. Returns nil on clean exit.
+func (a *AppleVirtBackend) WaitVM(name string) error {
+	a.mu.RLock()
+	avVM := a.live[name]
+	a.mu.RUnlock()
+
+	if avVM == nil {
+		return fmt.Errorf("VM %q not found in live map", name)
+	}
+
+	// Poll VM state until stopped or errored
+	for {
+		switch avVM.vm.State() {
+		case vz.VirtualMachineStateStopped:
+			return nil
+		case vz.VirtualMachineStateError:
+			return fmt.Errorf("VM entered error state")
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
 // Down gracefully stops the VM. It first asks stereosd to shut down via
 // vsock, then sends an ACPI power-off signal via RequestStop, and finally
 // force-stops if the VM has not halted within the timeout.

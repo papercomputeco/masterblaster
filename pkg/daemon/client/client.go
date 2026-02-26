@@ -1,24 +1,31 @@
 // Package client provides a thin wrapper for CLI commands to communicate
-// with the Masterblaster daemon over the unix domain socket.
+// with the Masterblaster daemon over the unix domain socket. It also
+// provides EnsureDaemon() to auto-start the daemon when needed.
 package client
 
 import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"os/exec"
+	"syscall"
 	"time"
 
 	"github.com/papercomputeco/masterblaster/pkg/daemon"
+	"github.com/papercomputeco/masterblaster/pkg/ui"
 )
 
 // Client communicates with the Masterblaster daemon over the unix socket.
 type Client struct {
+	baseDir    string
 	socketPath string
 }
 
 // New creates a new daemon client for the given base directory.
 func New(baseDir string) *Client {
 	return &Client{
+		baseDir:    baseDir,
 		socketPath: daemon.SocketPath(baseDir),
 	}
 }
@@ -97,4 +104,44 @@ func (c *Client) Destroy(name string) (*daemon.Response, error) {
 // List returns all known sandboxes.
 func (c *Client) List() (*daemon.Response, error) {
 	return c.call(&daemon.Request{Method: daemon.MethodList})
+}
+
+// EnsureDaemon starts the daemon if it's not already running. It finds
+// the current mb binary, forks it with "serve" in a new session (setsid),
+// and polls the socket until the daemon responds.
+func EnsureDaemon(baseDir string) error {
+	if daemon.IsRunning(baseDir) {
+		return nil
+	}
+
+	ui.Status("Starting daemon...")
+
+	mbBin, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("finding mb binary: %w", err)
+	}
+
+	cmd := exec.Command(mbBin, "serve")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setsid: true,
+	}
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("starting daemon: %w", err)
+	}
+
+	if err := cmd.Process.Release(); err != nil {
+		return fmt.Errorf("releasing daemon process: %w", err)
+	}
+
+	for i := 0; i < 30; i++ {
+		time.Sleep(200 * time.Millisecond)
+		if daemon.IsRunning(baseDir) {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("daemon did not start within 6 seconds")
 }

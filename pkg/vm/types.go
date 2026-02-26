@@ -86,3 +86,18 @@ func (inst *Instance) PIDFilePath() string {
 func (inst *Instance) JcardPath() string {
 	return filepath.Join(inst.Dir, "jcard.toml")
 }
+
+// VMHostPIDPath returns the path to the vmhost process PID file.
+func (inst *Instance) VMHostPIDPath() string {
+	return filepath.Join(inst.Dir, "vmhost.pid")
+}
+
+// VMHostSocketPath returns the path to the vmhost control socket.
+func (inst *Instance) VMHostSocketPath() string {
+	return filepath.Join(inst.Dir, "vmhost.sock")
+}
+
+// VMHostLogPath returns the path to the vmhost log file.
+func (inst *Instance) VMHostLogPath() string {
+	return filepath.Join(inst.Dir, "vmhost.log")
+}
