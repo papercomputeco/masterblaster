@@ -92,6 +92,7 @@ Most fields are optional and defaults are applied automatically.
 | `[[shared]]` | `guest` | | Guest mount point |
 | `[[shared]]` | `readonly` | `false` | Prevent agent from modifying host files |
 | `[secrets]` | *key = value* | | Injected to tmpfs via stereosd (never on disk) |
+| `[agent]` | `type` | `"sandboxed"` | `"sandboxed"` (gVisor container) or `"native"` (tmux session) |
 | `[agent]` | `harness` | `"claude-code"` | `"claude-code"`, `"opencode"`, `"gemini-cli"`, `"custom"` |
 | `[agent]` | `prompt` | | Prompt given to the agent on boot |
 | `[agent]` | `prompt_file` | | Path to a prompt file (relative to jcard.toml) |
@@ -100,6 +101,7 @@ Most fields are optional and defaults are applied automatically.
 | `[agent]` | `max_restarts` | `0` (unlimited) | Max restart attempts |
 | `[agent]` | `timeout` | | Agent timeout (e.g. `"2h"`) |
 | `[agent]` | `grace_period` | `"30s"` | SIGTERM grace period before SIGKILL |
+| `[agent]` | `extra_packages` | | Nix packages to install (sandboxed agents only) |
 | `[agent]` | `env` | | Environment variables for the agent process |
 
 Use `${ENV_VAR}` syntax in `[secrets]`, `[agent.env]`, and path fields to
