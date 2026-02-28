@@ -13,6 +13,19 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// AgentType defines how the agent process is executed inside the guest.
+type AgentType string
+
+const (
+	// AgentTypeSandboxed runs the agent in a gVisor (runsc) sandbox with
+	// read-only /nix/store bind mounts. This is the default.
+	AgentTypeSandboxed AgentType = "sandboxed"
+
+	// AgentTypeNative runs the agent directly on the host in a tmux
+	// session as the agent user (the original agentd behavior).
+	AgentTypeNative AgentType = "native"
+)
+
 // JcardConfig is the top-level configuration parsed from a jcard.toml file.
 type JcardConfig struct {
 	// Mixtape is the StereOS image to boot, in "name:tag" format.
@@ -88,6 +101,11 @@ type SharedMount struct {
 // AgentConfig defines what agent harness to run and how agentd manages it.
 // This section is passed through to agentd on the guest.
 type AgentConfig struct {
+	// Type selects the agent execution mode.
+	// "sandboxed" (default) runs in a gVisor container with /nix/store sharing.
+	// "native" runs directly on the host in a tmux session.
+	Type AgentType `toml:"type,omitempty"`
+
 	// Harness is the agent harness to use: "claude-code", "opencode",
 	// "gemini-cli", or "custom".
 	Harness string `toml:"harness"`
@@ -116,7 +134,14 @@ type AgentConfig struct {
 	GracePeriod string `toml:"grace_period"`
 
 	// Session is the tmux session name. Defaults to the harness name.
+	// Only used for native agents.
 	Session string `toml:"session"`
+
+	// ExtraPackages is a list of additional Nix package attribute names
+	// to install into the sandbox (e.g. ["ripgrep", "fd", "python311"]).
+	// These are resolved against the system's nixpkgs and materialized
+	// into /nix/store at agent launch time. Only used for sandboxed agents.
+	ExtraPackages []string `toml:"extra_packages,omitempty"`
 
 	// Env are environment variables set only for the agent process.
 	Env map[string]string `toml:"env"`
@@ -204,6 +229,10 @@ func applyDefaults(cfg *JcardConfig) {
 		}
 	}
 
+	if cfg.Agent.Type == "" {
+		cfg.Agent.Type = AgentTypeSandboxed
+	}
+
 	if cfg.Agent.Restart == "" {
 		cfg.Agent.Restart = "no"
 	}
@@ -270,6 +299,14 @@ func validate(cfg *JcardConfig) error {
 		}
 	}
 
+	// Validate agent type.
+	switch cfg.Agent.Type {
+	case AgentTypeSandboxed, AgentTypeNative:
+		// valid
+	default:
+		return fmt.Errorf("agent.type must be \"sandboxed\" or \"native\", got %q", cfg.Agent.Type)
+	}
+
 	if cfg.Agent.Harness != "" {
 		validHarnesses := map[string]bool{
 			"claude-code": true,
@@ -289,6 +326,18 @@ func validate(cfg *JcardConfig) error {
 
 	if cfg.Agent.MaxRestarts < 0 {
 		return fmt.Errorf("agent.max_restarts must be >= 0, got %d", cfg.Agent.MaxRestarts)
+	}
+
+	// Validate extra_packages entries are non-empty strings.
+	for i, pkg := range cfg.Agent.ExtraPackages {
+		if strings.TrimSpace(pkg) == "" {
+			return fmt.Errorf("agent.extra_packages[%d] is empty", i)
+		}
+	}
+
+	// extra_packages is only valid for sandboxed agents.
+	if cfg.Agent.Type != AgentTypeSandboxed && len(cfg.Agent.ExtraPackages) > 0 {
+		return fmt.Errorf("agent.extra_packages is only supported for type=\"sandboxed\"")
 	}
 
 	return nil
