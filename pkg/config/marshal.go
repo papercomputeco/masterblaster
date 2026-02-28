@@ -84,6 +84,11 @@ mode = "nat"
 # Agent runtime configuration.
 # Defines what agent harness to run and how agentd manages it.
 [agent]
+# Agent execution mode:
+#   "sandboxed" -> runs in a gVisor (runsc) container with /nix/store (default)
+#   "native"    -> runs directly in a tmux session as the agent user
+# type = "sandboxed"
+
 # The agent harness to use.
 # Built-in harnesses: "claude-code", "opencode", "gemini-cli", "custom"
 harness = "claude-code"
@@ -117,6 +122,11 @@ restart = "no"
 
 # Grace period for SIGTERM before SIGKILL on shutdown or timeout.
 # grace_period = "30s"
+
+# Extra Nix packages to install into the gVisor sandbox.
+# These are resolved against nixpkgs and materialized into /nix/store
+# at agent launch time. Only used when type = "sandboxed".
+# extra_packages = ["ripgrep", "fd", "python311"]
 
 # Environment variables set *only* for the agent process.
 # [agent.env]

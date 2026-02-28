@@ -3,3 +3,4 @@ mixtape = "opencode-mixtape:latest"
 [agent]
 harness = "opencode"
 prompt = "Hello world!"
+extra_packages = [ "cowsay" ]

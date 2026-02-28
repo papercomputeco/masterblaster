@@ -59,6 +59,10 @@ mixtape = "base"
 			It("should apply default agent workdir", func() {
 				Expect(cfg.Agent.Workdir).To(Equal("/workspace"))
 			})
+
+			It("should apply default agent type as sandboxed", func() {
+				Expect(cfg.Agent.Type).To(Equal(AgentTypeSandboxed))
+			})
 		})
 
 		Context("with a full config", func() {
@@ -213,6 +217,25 @@ forwards = [
     { host = 0, guest = 80, proto = "tcp" },
 ]
 `),
+			Entry("invalid agent type", `
+mixtape = "base"
+
+[agent]
+type = "docker"
+`),
+			Entry("extra_packages with empty entry", `
+mixtape = "base"
+
+[agent]
+extra_packages = ["ripgrep", "", "fd"]
+`),
+			Entry("extra_packages on native agent", `
+mixtape = "base"
+
+[agent]
+type = "native"
+extra_packages = ["ripgrep"]
+`),
 		)
 	})
 
@@ -318,6 +341,111 @@ guest = "/code"
 			cfg, err := Load(cfgPath)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cfg.Agent.Workdir).To(Equal("/code"))
+		})
+	})
+
+	Describe("Agent type", func() {
+		It("should parse type=sandboxed explicitly", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `
+mixtape = "base"
+
+[agent]
+type = "sandboxed"
+`
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Agent.Type).To(Equal(AgentTypeSandboxed))
+		})
+
+		It("should parse type=native", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `
+mixtape = "base"
+
+[agent]
+type = "native"
+`
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Agent.Type).To(Equal(AgentTypeNative))
+		})
+	})
+
+	Describe("Extra packages", func() {
+		It("should parse extra_packages for sandboxed agents", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `
+mixtape = "base"
+
+[agent]
+type = "sandboxed"
+extra_packages = ["ripgrep", "fd", "python311"]
+`
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Agent.ExtraPackages).To(Equal([]string{"ripgrep", "fd", "python311"}))
+		})
+
+		It("should accept empty extra_packages list", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `
+mixtape = "base"
+
+[agent]
+extra_packages = []
+`
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Agent.ExtraPackages).To(BeEmpty())
+		})
+
+		It("should accept sandboxed agent without extra_packages", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `
+mixtape = "base"
+
+[agent]
+type = "sandboxed"
+`
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Agent.ExtraPackages).To(BeNil())
+		})
+
+		It("should round-trip extra_packages through Marshal", func() {
+			cfg := &JcardConfig{
+				Mixtape: "base",
+				Agent: AgentConfig{
+					Harness:       "claude-code",
+					ExtraPackages: []string{"ripgrep", "fd"},
+				},
+			}
+			data, err := Marshal(cfg)
+			Expect(err).NotTo(HaveOccurred())
+
+			dir := GinkgoT().TempDir()
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, data, 0644)).To(Succeed())
+
+			loaded, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(loaded.Agent.ExtraPackages).To(Equal([]string{"ripgrep", "fd"}))
 		})
 	})
 })
