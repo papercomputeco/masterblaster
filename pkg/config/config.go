@@ -60,8 +60,9 @@ type JcardConfig struct {
 	// Secrets injected into the sandbox at runtime via stereosd.
 	Secrets map[string]string `toml:"secrets"`
 
-	// Agent runtime configuration (passed to agentd).
-	Agent AgentConfig `toml:"agent"`
+	// Agents defines the agent harnesses to run inside this sandbox.
+	// Each entry is an independent agent managed by agentd.
+	Agents []AgentConfig `toml:"agents"`
 }
 
 // ResourcesConfig describes the VM resource allocation.
@@ -106,6 +107,10 @@ type AgentConfig struct {
 	// "native" runs directly on the host in a tmux session.
 	Type AgentType `toml:"type,omitempty"`
 
+	// Name is a unique identifier for this agent. If omitted, a name is
+	// auto-generated from the harness name (e.g. "claude-code", "claude-code-1").
+	Name string `toml:"name"`
+
 	// Harness is the agent harness to use: "claude-code", "opencode",
 	// "gemini-cli", or "custom".
 	Harness string `toml:"harness"`
@@ -142,6 +147,12 @@ type AgentConfig struct {
 	// These are resolved against the system's nixpkgs and materialized
 	// into /nix/store at agent launch time. Only used for sandboxed agents.
 	ExtraPackages []string `toml:"extra_packages,omitempty"`
+
+	// Replicas is the number of identical agents to launch from this
+	// spec. Defaults to 1. When > 1, each replica gets a unique name
+	// suffixed with its index (e.g. "reviewer-0", "reviewer-1").
+	// Useful for launching swarms of agents performing the same task.
+	Replicas int `toml:"replicas"`
 
 	// Env are environment variables set only for the agent process.
 	Env map[string]string `toml:"env"`
@@ -193,10 +204,12 @@ func DefaultJcard() *JcardConfig {
 		Network: NetworkConfig{
 			Mode: "nat",
 		},
-		Agent: AgentConfig{
-			Harness: "claude-code",
-			Workdir: "/workspace",
-			Restart: "no",
+		Agents: []AgentConfig{
+			{
+				Harness: "claude-code",
+				Workdir: "/workspace",
+				Restart: "no",
+			},
 		},
 	}
 	return cfg
@@ -229,30 +242,129 @@ func applyDefaults(cfg *JcardConfig) {
 		}
 	}
 
-	if cfg.Agent.Type == "" {
-		cfg.Agent.Type = AgentTypeSandboxed
-	}
-
-	if cfg.Agent.Restart == "" {
-		cfg.Agent.Restart = "no"
-	}
-	if cfg.Agent.GracePeriod == "" {
-		cfg.Agent.GracePeriod = "30s"
-	}
-	if cfg.Agent.Workdir == "" {
-		// Default to first shared mount, or /workspace
-		if len(cfg.Shared) > 0 {
-			cfg.Agent.Workdir = cfg.Shared[0].Guest
-		} else {
-			cfg.Agent.Workdir = "/workspace"
+	// Apply per-agent defaults.
+	for i := range cfg.Agents {
+		a := &cfg.Agents[i]
+		if a.Type == "" {
+			a.Type = AgentTypeSandboxed
+		}
+		if a.Replicas <= 0 {
+			a.Replicas = 1
+		}
+		if a.Restart == "" {
+			a.Restart = "no"
+		}
+		if a.GracePeriod == "" {
+			a.GracePeriod = "30s"
+		}
+		if a.Workdir == "" {
+			if len(cfg.Shared) > 0 {
+				a.Workdir = cfg.Shared[0].Guest
+			} else {
+				a.Workdir = "/workspace"
+			}
+		}
+		if a.Env == nil {
+			a.Env = make(map[string]string)
 		}
 	}
+
+	// Expand replicas before name assignment: a single [[agents]] entry
+	// with replicas=5 becomes 5 individual agent entries.
+	cfg.Agents = expandReplicas(cfg.Agents)
+
+	// Auto-generate agent names for agents without explicit names.
+	assignAgentNames(cfg.Agents)
 
 	if cfg.Secrets == nil {
 		cfg.Secrets = make(map[string]string)
 	}
-	if cfg.Agent.Env == nil {
-		cfg.Agent.Env = make(map[string]string)
+}
+
+// expandReplicas expands agent entries with Replicas > 1 into individual
+// agent entries. Each replica is a copy of the original with a unique
+// name suffix. For replicas=1, the entry is left unchanged.
+//
+// Naming rules:
+//   - replicas=1, name="rev"   -> "rev" (unchanged)
+//   - replicas=3, name="rev"   -> "rev-0", "rev-1", "rev-2"
+//   - replicas=3, name=""      -> name left empty (assignAgentNames handles it later)
+//     but since there are now 3 unnamed entries with the same harness,
+//     assignAgentNames will produce "claude-code-0", "claude-code-1", "claude-code-2"
+func expandReplicas(agents []AgentConfig) []AgentConfig {
+	// Fast path: if all agents have replicas=1, return as-is.
+	needsExpansion := false
+	total := 0
+	for i := range agents {
+		if agents[i].Replicas > 1 {
+			needsExpansion = true
+		}
+		total += agents[i].Replicas
+	}
+	if !needsExpansion {
+		return agents
+	}
+
+	expanded := make([]AgentConfig, 0, total)
+	for _, a := range agents {
+		if a.Replicas <= 1 {
+			expanded = append(expanded, a)
+			continue
+		}
+
+		baseName := a.Name
+		for j := 0; j < a.Replicas; j++ {
+			replica := a
+			replica.Replicas = 1
+			if baseName != "" {
+				replica.Name = fmt.Sprintf("%s-%d", baseName, j)
+			}
+			// If baseName is empty, leave Name empty — assignAgentNames
+			// will handle it and produce unique names from the harness.
+			// Session is also left empty so it defaults to the final name.
+			replica.Session = ""
+			// Deep-copy the env map so replicas don't share a reference.
+			if a.Env != nil {
+				replica.Env = make(map[string]string, len(a.Env))
+				for k, v := range a.Env {
+					replica.Env[k] = v
+				}
+			}
+			expanded = append(expanded, replica)
+		}
+	}
+	return expanded
+}
+
+// assignAgentNames fills in Name for agents that don't have one set.
+// The first agent with a given harness gets the harness name (e.g. "claude-code").
+// Subsequent agents with the same harness get "<harness>-1", "<harness>-2", etc.
+func assignAgentNames(agents []AgentConfig) {
+	// Count how many times each harness appears (for unnamed agents).
+	harnessCount := make(map[string]int)
+	for i := range agents {
+		if agents[i].Name == "" {
+			harnessCount[agents[i].Harness]++
+		}
+	}
+
+	// Track how many of each harness we've assigned so far.
+	harnessIdx := make(map[string]int)
+	for i := range agents {
+		if agents[i].Name != "" {
+			continue
+		}
+		h := agents[i].Harness
+		idx := harnessIdx[h]
+		harnessIdx[h]++
+
+		if harnessCount[h] == 1 {
+			// Only one unnamed agent with this harness — use harness name directly.
+			agents[i].Name = h
+		} else {
+			// Multiple unnamed agents — suffix with index.
+			agents[i].Name = fmt.Sprintf("%s-%d", h, idx)
+		}
 	}
 }
 
@@ -264,16 +376,16 @@ func expandPaths(cfg *JcardConfig, baseDir string) {
 		cfg.Shared[i].Host = expandPath(cfg.Shared[i].Host, baseDir)
 	}
 
-	// Expand prompt_file relative to jcard.toml
-	if cfg.Agent.PromptFile != "" {
-		cfg.Agent.PromptFile = expandPath(cfg.Agent.PromptFile, baseDir)
+	// Expand per-agent paths
+	for i := range cfg.Agents {
+		if cfg.Agents[i].PromptFile != "" {
+			cfg.Agents[i].PromptFile = expandPath(cfg.Agents[i].PromptFile, baseDir)
+		}
+		cfg.Agents[i].Env = expandEnvMap(cfg.Agents[i].Env)
 	}
 
 	// Expand environment variable references in secrets
 	cfg.Secrets = expandEnvMap(cfg.Secrets)
-
-	// Expand environment variable references in agent env
-	cfg.Agent.Env = expandEnvMap(cfg.Agent.Env)
 }
 
 // validate checks that required fields are present and values are sane.
@@ -299,45 +411,61 @@ func validate(cfg *JcardConfig) error {
 		}
 	}
 
-	// Validate agent type.
-	switch cfg.Agent.Type {
-	case AgentTypeSandboxed, AgentTypeNative:
-		// valid
-	default:
-		return fmt.Errorf("agent.type must be \"sandboxed\" or \"native\", got %q", cfg.Agent.Type)
+	// Validate each agent.
+	validHarnesses := map[string]bool{
+		"claude-code": true,
+		"opencode":    true,
+		"gemini-cli":  true,
+		"custom":      true,
 	}
-
-	if cfg.Agent.Harness != "" {
-		validHarnesses := map[string]bool{
-			"claude-code": true,
-			"opencode":    true,
-			"gemini-cli":  true,
-			"custom":      true,
-		}
-		if !validHarnesses[cfg.Agent.Harness] {
-			return fmt.Errorf("agent.harness must be \"claude-code\", \"opencode\", \"gemini-cli\", or \"custom\", got %q", cfg.Agent.Harness)
-		}
-	}
-
 	validRestart := map[string]bool{"no": true, "on-failure": true, "always": true}
-	if !validRestart[cfg.Agent.Restart] {
-		return fmt.Errorf("agent.restart must be \"no\", \"on-failure\", or \"always\", got %q", cfg.Agent.Restart)
+	validAgentTypes := map[string]AgentType{
+		"sandboxed": AgentTypeSandboxed,
+		"native":    AgentTypeNative,
 	}
+	namesSeen := make(map[string]bool, len(cfg.Agents))
 
-	if cfg.Agent.MaxRestarts < 0 {
-		return fmt.Errorf("agent.max_restarts must be >= 0, got %d", cfg.Agent.MaxRestarts)
-	}
-
-	// Validate extra_packages entries are non-empty strings.
-	for i, pkg := range cfg.Agent.ExtraPackages {
-		if strings.TrimSpace(pkg) == "" {
-			return fmt.Errorf("agent.extra_packages[%d] is empty", i)
+	for i, a := range cfg.Agents {
+		// Validate agent type.
+		if _, ok := validAgentTypes[string(a.Type)]; !ok {
+			return fmt.Errorf("agents[%d].type must be \"sandboxed\" or \"native\", got %q", i, a.Type)
 		}
-	}
 
-	// extra_packages is only valid for sandboxed agents.
-	if cfg.Agent.Type != AgentTypeSandboxed && len(cfg.Agent.ExtraPackages) > 0 {
-		return fmt.Errorf("agent.extra_packages is only supported for type=\"sandboxed\"")
+		// Validate unique names.
+		if namesSeen[a.Name] {
+			return fmt.Errorf("agents[%d]: duplicate agent name %q", i, a.Name)
+		}
+		namesSeen[a.Name] = true
+
+		if a.Harness != "" {
+			if !validHarnesses[a.Harness] {
+				return fmt.Errorf("agents[%d].harness must be \"claude-code\", \"opencode\", \"gemini-cli\", or \"custom\", got %q", i, a.Harness)
+			}
+		}
+
+		if !validRestart[a.Restart] {
+			return fmt.Errorf("agents[%d].restart must be \"no\", \"on-failure\", or \"always\", got %q", i, a.Restart)
+		}
+
+		if a.MaxRestarts < 0 {
+			return fmt.Errorf("agents[%d].max_restarts must be >= 0, got %d", i, a.MaxRestarts)
+		}
+
+		if a.Replicas < 1 {
+			return fmt.Errorf("agents[%d].replicas must be >= 1, got %d", i, a.Replicas)
+		}
+
+		// Validate extra_packages entries are non-empty strings.
+		for j, pkg := range a.ExtraPackages {
+			if strings.TrimSpace(pkg) == "" {
+				return fmt.Errorf("agents[%d].extra_packages[%d] is empty", i, j)
+			}
+		}
+
+		// extra_packages is only valid for sandboxed agents.
+		if a.Type != AgentTypeSandboxed && len(a.ExtraPackages) > 0 {
+			return fmt.Errorf("agents[%d].extra_packages is only supported for type=\"sandboxed\"", i)
+		}
 	}
 
 	return nil

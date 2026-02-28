@@ -48,20 +48,52 @@ mixtape = "base"
 				Expect(cfg.Network.Mode).To(Equal("nat"))
 			})
 
+			It("should have an empty agents list", func() {
+				Expect(cfg.Agents).To(BeEmpty())
+			})
+		})
+
+		Context("with a single agent config", func() {
+			var cfg *JcardConfig
+
+			BeforeEach(func() {
+				dir := GinkgoT().TempDir()
+				tomlContent := `
+mixtape = "base"
+
+[[agents]]
+harness = "claude-code"
+`
+				cfgPath := filepath.Join(dir, "jcard.toml")
+				Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+				var err error
+				cfg, err = Load(cfgPath)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should have one agent", func() {
+				Expect(cfg.Agents).To(HaveLen(1))
+			})
+
 			It("should apply default agent restart policy", func() {
-				Expect(cfg.Agent.Restart).To(Equal("no"))
+				Expect(cfg.Agents[0].Restart).To(Equal("no"))
 			})
 
 			It("should apply default agent grace period", func() {
-				Expect(cfg.Agent.GracePeriod).To(Equal("30s"))
+				Expect(cfg.Agents[0].GracePeriod).To(Equal("30s"))
 			})
 
 			It("should apply default agent workdir", func() {
-				Expect(cfg.Agent.Workdir).To(Equal("/workspace"))
+				Expect(cfg.Agents[0].Workdir).To(Equal("/workspace"))
+			})
+
+			It("should auto-generate agent name from harness", func() {
+				Expect(cfg.Agents[0].Name).To(Equal("claude-code"))
 			})
 
 			It("should apply default agent type as sandboxed", func() {
-				Expect(cfg.Agent.Type).To(Equal(AgentTypeSandboxed))
+				Expect(cfg.Agents[0].Type).To(Equal(AgentTypeSandboxed))
 			})
 		})
 
@@ -108,7 +140,8 @@ readonly = true
 [secrets]
 MY_SECRET = "secret-value"
 
-[agent]
+[[agents]]
+name = "reviewer"
 harness = "claude-code"
 prompt_file = "./prompt.md"
 workdir = "/workspace"
@@ -118,7 +151,7 @@ timeout = "2h"
 grace_period = "60s"
 session = "my-session"
 
-[agent.env]
+[agents.env]
 FOO = "bar"
 `
 				cfgPath := filepath.Join(dir, "jcard.toml")
@@ -164,18 +197,258 @@ FOO = "bar"
 			})
 
 			It("should parse agent configuration", func() {
-				Expect(cfg.Agent.Harness).To(Equal("claude-code"))
-				Expect(cfg.Agent.PromptFile).To(Equal(filepath.Join(dir, "prompt.md")))
-				Expect(cfg.Agent.Restart).To(Equal("on-failure"))
-				Expect(cfg.Agent.MaxRestarts).To(Equal(5))
-				Expect(cfg.Agent.Timeout).To(Equal("2h"))
-				Expect(cfg.Agent.GracePeriod).To(Equal("60s"))
-				Expect(cfg.Agent.Session).To(Equal("my-session"))
+				Expect(cfg.Agents).To(HaveLen(1))
+				a := cfg.Agents[0]
+				Expect(a.Name).To(Equal("reviewer"))
+				Expect(a.Harness).To(Equal("claude-code"))
+				Expect(a.PromptFile).To(Equal(filepath.Join(dir, "prompt.md")))
+				Expect(a.Restart).To(Equal("on-failure"))
+				Expect(a.MaxRestarts).To(Equal(5))
+				Expect(a.Timeout).To(Equal("2h"))
+				Expect(a.GracePeriod).To(Equal("60s"))
+				Expect(a.Session).To(Equal("my-session"))
 			})
 
 			It("should parse agent env", func() {
-				Expect(cfg.Agent.Env).To(HaveKeyWithValue("FOO", "bar"))
+				Expect(cfg.Agents[0].Env).To(HaveKeyWithValue("FOO", "bar"))
 			})
+		})
+
+		Context("with multiple agents", func() {
+			var cfg *JcardConfig
+
+			BeforeEach(func() {
+				dir := GinkgoT().TempDir()
+				tomlContent := `
+mixtape = "base"
+
+[[agents]]
+name = "reviewer"
+harness = "claude-code"
+prompt = "review the code"
+
+[[agents]]
+name = "coder"
+harness = "opencode"
+prompt = "implement the feature"
+
+[[agents]]
+harness = "gemini-cli"
+prompt = "check for security issues"
+`
+				cfgPath := filepath.Join(dir, "jcard.toml")
+				Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+				var err error
+				cfg, err = Load(cfgPath)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should parse all agents", func() {
+				Expect(cfg.Agents).To(HaveLen(3))
+			})
+
+			It("should preserve explicit names", func() {
+				Expect(cfg.Agents[0].Name).To(Equal("reviewer"))
+				Expect(cfg.Agents[1].Name).To(Equal("coder"))
+			})
+
+			It("should auto-generate name for unnamed agent", func() {
+				Expect(cfg.Agents[2].Name).To(Equal("gemini-cli"))
+			})
+
+			It("should parse each agent's harness", func() {
+				Expect(cfg.Agents[0].Harness).To(Equal("claude-code"))
+				Expect(cfg.Agents[1].Harness).To(Equal("opencode"))
+				Expect(cfg.Agents[2].Harness).To(Equal("gemini-cli"))
+			})
+		})
+
+		Context("with duplicate unnamed harnesses", func() {
+			var cfg *JcardConfig
+
+			BeforeEach(func() {
+				dir := GinkgoT().TempDir()
+				tomlContent := `
+mixtape = "base"
+
+[[agents]]
+harness = "claude-code"
+prompt = "task one"
+
+[[agents]]
+harness = "claude-code"
+prompt = "task two"
+`
+				cfgPath := filepath.Join(dir, "jcard.toml")
+				Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+				var err error
+				cfg, err = Load(cfgPath)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should generate unique names", func() {
+				Expect(cfg.Agents[0].Name).To(Equal("claude-code-0"))
+				Expect(cfg.Agents[1].Name).To(Equal("claude-code-1"))
+			})
+		})
+	})
+
+	Describe("Replicas", func() {
+		It("should default replicas to 1", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `
+mixtape = "base"
+
+[[agents]]
+harness = "claude-code"
+`
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Agents).To(HaveLen(1))
+			Expect(cfg.Agents[0].Replicas).To(Equal(1))
+			Expect(cfg.Agents[0].Name).To(Equal("claude-code"))
+		})
+
+		It("should expand replicas=1 without suffix", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `
+mixtape = "base"
+
+[[agents]]
+name = "reviewer"
+harness = "claude-code"
+replicas = 1
+`
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Agents).To(HaveLen(1))
+			Expect(cfg.Agents[0].Name).To(Equal("reviewer"))
+		})
+
+		It("should expand named replicas with index suffix", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `
+mixtape = "base"
+
+[[agents]]
+name = "reviewer"
+harness = "claude-code"
+prompt = "review code"
+replicas = 3
+`
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Agents).To(HaveLen(3))
+			Expect(cfg.Agents[0].Name).To(Equal("reviewer-0"))
+			Expect(cfg.Agents[1].Name).To(Equal("reviewer-1"))
+			Expect(cfg.Agents[2].Name).To(Equal("reviewer-2"))
+			// Each replica should have the same harness and prompt.
+			for _, a := range cfg.Agents {
+				Expect(a.Harness).To(Equal("claude-code"))
+				Expect(a.Prompt).To(Equal("review code"))
+				Expect(a.Replicas).To(Equal(1))
+			}
+		})
+
+		It("should expand unnamed replicas and auto-generate names", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `
+mixtape = "base"
+
+[[agents]]
+harness = "claude-code"
+replicas = 3
+`
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Agents).To(HaveLen(3))
+			Expect(cfg.Agents[0].Name).To(Equal("claude-code-0"))
+			Expect(cfg.Agents[1].Name).To(Equal("claude-code-1"))
+			Expect(cfg.Agents[2].Name).To(Equal("claude-code-2"))
+		})
+
+		It("should handle mixed replicas and single agents", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `
+mixtape = "base"
+
+[[agents]]
+name = "lead"
+harness = "claude-code"
+
+[[agents]]
+name = "worker"
+harness = "opencode"
+replicas = 3
+`
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Agents).To(HaveLen(4))
+			Expect(cfg.Agents[0].Name).To(Equal("lead"))
+			Expect(cfg.Agents[1].Name).To(Equal("worker-0"))
+			Expect(cfg.Agents[2].Name).To(Equal("worker-1"))
+			Expect(cfg.Agents[3].Name).To(Equal("worker-2"))
+		})
+
+		It("should deep-copy env maps across replicas", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `
+mixtape = "base"
+
+[[agents]]
+name = "worker"
+harness = "claude-code"
+replicas = 2
+
+[agents.env]
+KEY = "value"
+`
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Agents).To(HaveLen(2))
+			// Verify both have the env var.
+			Expect(cfg.Agents[0].Env).To(HaveKeyWithValue("KEY", "value"))
+			Expect(cfg.Agents[1].Env).To(HaveKeyWithValue("KEY", "value"))
+		})
+
+		It("should support large replica counts", func() {
+			dir := GinkgoT().TempDir()
+			tomlContent := `
+mixtape = "base"
+
+[[agents]]
+name = "swarm"
+harness = "claude-code"
+replicas = 500
+`
+			cfgPath := filepath.Join(dir, "jcard.toml")
+			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
+
+			cfg, err := Load(cfgPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Agents).To(HaveLen(500))
+			Expect(cfg.Agents[0].Name).To(Equal("swarm-0"))
+			Expect(cfg.Agents[499].Name).To(Equal("swarm-499"))
 		})
 	})
 
@@ -199,13 +472,14 @@ mode = "invalid"
 			Entry("invalid harness", `
 mixtape = "base"
 
-[agent]
+[[agents]]
 harness = "invalid-harness"
 `),
 			Entry("invalid restart policy", `
 mixtape = "base"
 
-[agent]
+[[agents]]
+harness = "claude-code"
 restart = "invalid"
 `),
 			Entry("invalid port forward (host port 0)", `
@@ -217,22 +491,36 @@ forwards = [
     { host = 0, guest = 80, proto = "tcp" },
 ]
 `),
+			Entry("duplicate agent names", `
+mixtape = "base"
+
+[[agents]]
+name = "same"
+harness = "claude-code"
+
+[[agents]]
+name = "same"
+harness = "opencode"
+`),
 			Entry("invalid agent type", `
 mixtape = "base"
 
-[agent]
+[[agents]]
+harness = "claude-code"
 type = "docker"
 `),
 			Entry("extra_packages with empty entry", `
 mixtape = "base"
 
-[agent]
+[[agents]]
+harness = "claude-code"
 extra_packages = ["ripgrep", "", "fd"]
 `),
 			Entry("extra_packages on native agent", `
 mixtape = "base"
 
-[agent]
+[[agents]]
+harness = "claude-code"
 type = "native"
 extra_packages = ["ripgrep"]
 `),
@@ -334,13 +622,16 @@ mixtape = "base"
 [[shared]]
 host = "./"
 guest = "/code"
+
+[[agents]]
+harness = "claude-code"
 `
 			cfgPath := filepath.Join(dir, "jcard.toml")
 			Expect(os.WriteFile(cfgPath, []byte(tomlContent), 0644)).To(Succeed())
 
 			cfg, err := Load(cfgPath)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cfg.Agent.Workdir).To(Equal("/code"))
+			Expect(cfg.Agents[0].Workdir).To(Equal("/code"))
 		})
 	})
 
@@ -350,7 +641,8 @@ guest = "/code"
 			tomlContent := `
 mixtape = "base"
 
-[agent]
+[[agents]]
+harness = "claude-code"
 type = "sandboxed"
 `
 			cfgPath := filepath.Join(dir, "jcard.toml")
@@ -358,7 +650,7 @@ type = "sandboxed"
 
 			cfg, err := Load(cfgPath)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cfg.Agent.Type).To(Equal(AgentTypeSandboxed))
+			Expect(cfg.Agents[0].Type).To(Equal(AgentTypeSandboxed))
 		})
 
 		It("should parse type=native", func() {
@@ -366,7 +658,8 @@ type = "sandboxed"
 			tomlContent := `
 mixtape = "base"
 
-[agent]
+[[agents]]
+harness = "claude-code"
 type = "native"
 `
 			cfgPath := filepath.Join(dir, "jcard.toml")
@@ -374,7 +667,7 @@ type = "native"
 
 			cfg, err := Load(cfgPath)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cfg.Agent.Type).To(Equal(AgentTypeNative))
+			Expect(cfg.Agents[0].Type).To(Equal(AgentTypeNative))
 		})
 	})
 
@@ -384,7 +677,8 @@ type = "native"
 			tomlContent := `
 mixtape = "base"
 
-[agent]
+[[agents]]
+harness = "claude-code"
 type = "sandboxed"
 extra_packages = ["ripgrep", "fd", "python311"]
 `
@@ -393,7 +687,7 @@ extra_packages = ["ripgrep", "fd", "python311"]
 
 			cfg, err := Load(cfgPath)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cfg.Agent.ExtraPackages).To(Equal([]string{"ripgrep", "fd", "python311"}))
+			Expect(cfg.Agents[0].ExtraPackages).To(Equal([]string{"ripgrep", "fd", "python311"}))
 		})
 
 		It("should accept empty extra_packages list", func() {
@@ -401,7 +695,8 @@ extra_packages = ["ripgrep", "fd", "python311"]
 			tomlContent := `
 mixtape = "base"
 
-[agent]
+[[agents]]
+harness = "claude-code"
 extra_packages = []
 `
 			cfgPath := filepath.Join(dir, "jcard.toml")
@@ -409,7 +704,7 @@ extra_packages = []
 
 			cfg, err := Load(cfgPath)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cfg.Agent.ExtraPackages).To(BeEmpty())
+			Expect(cfg.Agents[0].ExtraPackages).To(BeEmpty())
 		})
 
 		It("should accept sandboxed agent without extra_packages", func() {
@@ -417,7 +712,8 @@ extra_packages = []
 			tomlContent := `
 mixtape = "base"
 
-[agent]
+[[agents]]
+harness = "claude-code"
 type = "sandboxed"
 `
 			cfgPath := filepath.Join(dir, "jcard.toml")
@@ -425,15 +721,17 @@ type = "sandboxed"
 
 			cfg, err := Load(cfgPath)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cfg.Agent.ExtraPackages).To(BeNil())
+			Expect(cfg.Agents[0].ExtraPackages).To(BeNil())
 		})
 
 		It("should round-trip extra_packages through Marshal", func() {
 			cfg := &JcardConfig{
 				Mixtape: "base",
-				Agent: AgentConfig{
-					Harness:       "claude-code",
-					ExtraPackages: []string{"ripgrep", "fd"},
+				Agents: []AgentConfig{
+					{
+						Harness:       "claude-code",
+						ExtraPackages: []string{"ripgrep", "fd"},
+					},
 				},
 			}
 			data, err := Marshal(cfg)
@@ -445,7 +743,7 @@ type = "sandboxed"
 
 			loaded, err := Load(cfgPath)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(loaded.Agent.ExtraPackages).To(Equal([]string{"ripgrep", "fd"}))
+			Expect(loaded.Agents[0].ExtraPackages).To(Equal([]string{"ripgrep", "fd"}))
 		})
 	})
 })

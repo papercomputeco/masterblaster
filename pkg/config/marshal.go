@@ -82,8 +82,13 @@ mode = "nat"
 # ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}"
 
 # Agent runtime configuration.
-# Defines what agent harness to run and how agentd manages it.
-[agent]
+# Multiple agents can run concurrently inside a single sandbox.
+# Each [[agents]] entry defines an independent agent managed by agentd.
+
+[[agents]]
+# Unique name for this agent (optional, auto-generated from harness if omitted).
+# name = "reviewer"
+
 # Agent execution mode:
 #   "sandboxed" -> runs in a gVisor (runsc) container with /nix/store (default)
 #   "native"    -> runs directly in a tmux session as the agent user
@@ -128,8 +133,19 @@ restart = "no"
 # at agent launch time. Only used when type = "sandboxed".
 # extra_packages = ["ripgrep", "fd", "python311"]
 
-# Environment variables set *only* for the agent process.
-# [agent.env]
+# Number of identical agent replicas to launch from this spec.
+# Each replica gets a unique name suffixed with its index (e.g. "reviewer-0",
+# "reviewer-1"). Useful for launching swarms of agents performing the same task.
+# replicas = 1
+
+# Environment variables set *only* for this agent process.
+# [agents.env]
 # MY_VAR = "my_value"
+
+# To add more agents, add another [[agents]] block:
+# [[agents]]
+# name = "coder"
+# harness = "opencode"
+# prompt = "implement the feature"
 `
 }
