@@ -390,9 +390,17 @@ func (a *AppleVirtBackend) buildVMConfig(
 	}
 
 	// --- Disk (raw only) ---
-	diskAttachment, err := vz.NewDiskImageStorageDeviceAttachment(
+	// Use cached + fsync mode to ensure guest flush/sync operations are
+	// honored by the Virtualization.framework. Without explicit fsync mode,
+	// the framework may use DiskImageSynchronizationModeNone which silently
+	// drops guest sync calls. This causes ext4 metadata corruption during
+	// boot-time operations like growpart + resize2fs that rely on write
+	// ordering and fsync for journal/checksum consistency.
+	diskAttachment, err := vz.NewDiskImageStorageDeviceAttachmentWithCacheAndSync(
 		inst.DiskPath(),
 		false, // read-write
+		vz.DiskImageCachingModeCached,
+		vz.DiskImageSynchronizationModeFsync,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("creating disk attachment for %s: %w", inst.DiskPath(), err)
