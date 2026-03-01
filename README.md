@@ -53,7 +53,7 @@ guest = "/home/agent/workspace"
 [secrets]
 ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}"
 
-[agent]
+[[agents]]
 harness = "opencode"
 prompt  = "review the code in this directory and fix any failing tests"
 workdir = "/home/agent/workspace"
@@ -92,18 +92,50 @@ Most fields are optional and defaults are applied automatically.
 | `[[shared]]` | `guest` | | Guest mount point |
 | `[[shared]]` | `readonly` | `false` | Prevent agent from modifying host files |
 | `[secrets]` | *key = value* | | Injected to tmpfs via stereosd (never on disk) |
-| `[agent]` | `harness` | `"claude-code"` | `"claude-code"`, `"opencode"`, `"gemini-cli"`, `"custom"` |
-| `[agent]` | `prompt` | | Prompt given to the agent on boot |
-| `[agent]` | `prompt_file` | | Path to a prompt file (relative to jcard.toml) |
-| `[agent]` | `workdir` | first `[[shared]]` guest path or `"/workspace"` | Agent working directory |
-| `[agent]` | `restart` | `"no"` | `"no"`, `"on-failure"`, `"always"` |
-| `[agent]` | `max_restarts` | `0` (unlimited) | Max restart attempts |
-| `[agent]` | `timeout` | | Agent timeout (e.g. `"2h"`) |
-| `[agent]` | `grace_period` | `"30s"` | SIGTERM grace period before SIGKILL |
-| `[agent]` | `env` | | Environment variables for the agent process |
+| `[[agents]]` | `name` | auto-generated from harness | Unique identifier for this agent |
+| `[[agents]]` | `type` | `"sandboxed"` | `"sandboxed"` (gVisor container) or `"native"` (tmux session) |
+| `[[agents]]` | `harness` | `"claude-code"` | `"claude-code"`, `"opencode"`, `"gemini-cli"`, `"custom"` |
+| `[[agents]]` | `prompt` | | Prompt given to the agent on boot |
+| `[[agents]]` | `prompt_file` | | Path to a prompt file (relative to jcard.toml) |
+| `[[agents]]` | `workdir` | first `[[shared]]` guest path or `"/workspace"` | Agent working directory |
+| `[[agents]]` | `restart` | `"no"` | `"no"`, `"on-failure"`, `"always"` |
+| `[[agents]]` | `max_restarts` | `0` (unlimited) | Max restart attempts |
+| `[[agents]]` | `timeout` | | Agent timeout (e.g. `"2h"`) |
+| `[[agents]]` | `grace_period` | `"30s"` | SIGTERM grace period before SIGKILL |
+| `[[agents]]` | `replicas` | `1` | Number of identical agents to launch (e.g. `5` creates 5 copies) |
+| `[[agents]]` | `extra_packages` | | Nix packages to install (sandboxed agents only) |
+| `[[agents]]` | `env` | | Environment variables for the agent process |
 
-Use `${ENV_VAR}` syntax in `[secrets]`, `[agent.env]`, and path fields to
+Use `${ENV_VAR}` syntax in `[secrets]`, `[agents.env]`, and path fields to
 reference host environment variables. Paths support `~` expansion.
+
+### Multiple agents and replicas
+
+You can run multiple agents concurrently in a single sandbox:
+
+```toml
+[[agents]]
+name = "reviewer"
+harness = "claude-code"
+prompt = "review the PR for security issues"
+
+[[agents]]
+name = "coder"
+harness = "opencode"
+prompt = "implement the feature"
+```
+
+Use `replicas` to launch swarms of identical agents:
+
+```toml
+[[agents]]
+name = "worker"
+harness = "claude-code"
+prompt = "process tasks from the queue"
+replicas = 10
+```
+
+This creates 10 agents named `worker-0` through `worker-9`, each running the same prompt.
 
 ## CLI commands
 
