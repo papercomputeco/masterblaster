@@ -1,6 +1,12 @@
-mixtape = "opencode-mixtape:latest"
+mixtape = "test:latest"
 
-[agent]
+[resources]
+cpus   = 2
+memory = "8GiB"
+
+[[agents]]
+type = "native"
 harness = "opencode"
-prompt = "Hello world!"
+prompt = "Use cowsay to print Hello world!"
 extra_packages = [ "cowsay" ]
+replicas = 10
