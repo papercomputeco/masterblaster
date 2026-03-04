@@ -72,6 +72,17 @@ func (c *Client) Info() (*Response, error) {
 	return c.call(&Request{Method: MethodInfo})
 }
 
+// Apply sends updated configuration and secrets to the guest via the
+// vmhost process. The vmhost connects to stereosd and sends set_config
+// and inject_secret messages.
+func (c *Client) Apply(configContent string, secrets map[string]string) (*Response, error) {
+	return c.call(&Request{
+		Method:        MethodApply,
+		ConfigContent: configContent,
+		Secrets:       secrets,
+	})
+}
+
 // IsAlive checks if the vmhost process is reachable by sending a status
 // request. Returns true if the vmhost responds, false otherwise.
 func (c *Client) IsAlive() bool {
