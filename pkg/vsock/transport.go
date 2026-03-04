@@ -65,19 +65,6 @@ func (f *FuncTransport) Dial(timeout time.Duration) (net.Conn, error) {
 // String returns the human-readable label.
 func (f *FuncTransport) String() string { return f.Label }
 
-// NOTE: VsockTransport for Linux/KVM (AF_VSOCK CID:3 port 1024) will be
-// implemented when Linux backend support is built. It requires:
-//
-//   import "golang.org/x/sys/unix"
-//
-//   type VsockTransport struct {
-//       CID  uint32
-//       Port uint32
-//   }
-//
-//   func (t *VsockTransport) Dial(timeout time.Duration) (net.Conn, error) {
-//       fd, _ := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM, 0)
-//       addr := &unix.SockaddrVM{CID: t.CID, Port: t.Port}
-//       unix.Connect(fd, addr)
-//       return net.FileConn(os.NewFile(uintptr(fd), "vsock"))
-//   }
+// VsockTransport for Linux/KVM (AF_VSOCK) is implemented in
+// transport_linux.go. It connects directly to the guest via
+// vhost-vsock-pci, bypassing TCP/SLIRP entirely.

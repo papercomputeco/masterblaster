@@ -61,9 +61,10 @@ func bootAppleVirt(ctx context.Context, baseDir string, inst *vm.Instance, logge
 // getPlatformConfig returns the QEMU platform configuration for darwin/arm64.
 func getPlatformConfig(_ string) *vm.QEMUPlatformConfig {
 	return &vm.QEMUPlatformConfig{
-		Accelerator: "hvf",
-		Binary:      "qemu-system-aarch64",
-		MachineType: "virt",
+		Accelerator:  "hvf",
+		Binary:       "qemu-system-aarch64",
+		MachineType:  "virt",
+		MachineProps: "highmem=on",
 		EFISearchPaths: []string{
 			"{qemu_prefix}/share/qemu/edk2-aarch64-code.fd",
 			"/opt/homebrew/share/qemu/edk2-aarch64-code.fd",

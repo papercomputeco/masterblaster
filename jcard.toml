@@ -5,8 +5,6 @@ cpus   = 2
 memory = "8GiB"
 
 [[agents]]
-type = "native"
 harness = "opencode"
-prompt = "Use cowsay to print Hello world!"
-extra_packages = [ "cowsay" ]
-replicas = 10
+prompt = "Hello world"
+replicas = 3
