@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -91,4 +92,24 @@ func Label(label, value string) string {
 		lipgloss.NewStyle().Foreground(CyanColor).Render(label),
 		value,
 	)
+}
+
+// Confirm prompts the user with an interactive yes/no confirmation using
+// charmbracelet/huh. Returns true if the user confirms, false otherwise.
+// Defaults to "no" if the user presses enter without selecting.
+func Confirm(format string, args ...interface{}) bool {
+	msg := fmt.Sprintf(format, args...)
+
+	var confirmed bool
+	err := huh.NewConfirm().
+		Title(msg).
+		Affirmative("Yes").
+		Negative("No").
+		Value(&confirmed).
+		Run()
+	if err != nil {
+		return false
+	}
+
+	return confirmed
 }

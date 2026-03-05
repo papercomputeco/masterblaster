@@ -149,6 +149,55 @@ func PrintList(mixtapes []MixtapeInfo) {
 	tbl.Render(os.Stdout)
 }
 
+// Remove deletes a locally downloaded mixtape. If tag is empty, the entire
+// mixtape directory (all tags) is removed. If tag is specified, only that
+// tag directory is removed -- and if it was the last tag, the parent name
+// directory is cleaned up too.
+func Remove(baseDir, mixtapeName, tag string) error {
+	mixtapesRoot := filepath.Join(baseDir, "mixtapes")
+	nameDir := filepath.Join(mixtapesRoot, mixtapeName)
+
+	// Verify the mixtape exists.
+	if _, err := os.Stat(nameDir); os.IsNotExist(err) {
+		return fmt.Errorf("mixtape %q not found locally", mixtapeName)
+	}
+
+	if tag == "" {
+		// Remove the entire mixtape (all tags).
+		if err := os.RemoveAll(nameDir); err != nil {
+			return fmt.Errorf("removing mixtape %q: %w", mixtapeName, err)
+		}
+		return nil
+	}
+
+	// Remove a specific tag.
+	tagDir := filepath.Join(nameDir, tag)
+	if _, err := os.Stat(tagDir); os.IsNotExist(err) {
+		return fmt.Errorf("mixtape %q tag %q not found locally", mixtapeName, tag)
+	}
+
+	if err := os.RemoveAll(tagDir); err != nil {
+		return fmt.Errorf("removing %s:%s: %w", mixtapeName, tag, err)
+	}
+
+	// Clean up the parent name directory if no tags remain.
+	remaining, err := os.ReadDir(nameDir)
+	if err == nil && len(remaining) == 0 {
+		_ = os.Remove(nameDir)
+	}
+
+	return nil
+}
+
+// ParseNameTag splits a "name[:tag]" string into name and tag components.
+// If no tag is present, tag is returned as empty.
+func ParseNameTag(ref string) (name, tag string) {
+	if idx := strings.Index(ref, ":"); idx != -1 {
+		return ref[:idx], ref[idx+1:]
+	}
+	return ref, ""
+}
+
 func formatSize(bytes int64) string {
 	const (
 		_  = iota

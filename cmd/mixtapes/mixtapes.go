@@ -27,7 +27,7 @@ Examples:
 
 const mixtapesShortDesc string = "Manage StereOS mixtapes"
 
-// NewMixtapesCmd creates the mixtapes command group with list, local, pull subcommands.
+// NewMixtapesCmd creates the mixtapes command group with list, local, pull, rm subcommands.
 func NewMixtapesCmd(configDirFn func() string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mixtapes",
@@ -38,6 +38,7 @@ func NewMixtapesCmd(configDirFn func() string) *cobra.Command {
 	cmd.AddCommand(newMixtapesListCmd())
 	cmd.AddCommand(newMixtapesLocalCmd(configDirFn))
 	cmd.AddCommand(newMixtapesPullCmd(configDirFn))
+	cmd.AddCommand(newMixtapesRmCmd(configDirFn))
 
 	return cmd
 }
@@ -123,4 +124,51 @@ func runMixtapesPull(baseDir, name string) error {
 	return ui.Step(os.Stderr, fmt.Sprintf("Pulling mixtape %q...", name), func() error {
 		return mixtapes.Pull(baseDir, name)
 	})
+}
+
+func newMixtapesRmCmd(configDirFn func() string) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "rm <name[:tag]>",
+		Short: "Remove a locally downloaded mixtape",
+		Long: `Remove a mixtape from the local disk.
+
+With just a name, removes the mixtape and all of its tags.
+With name:tag, removes only that specific tag.
+
+Examples:
+  mb mixtapes rm coder-arm64          # Remove all tags
+  mb mixtapes rm coder-arm64:latest   # Remove only the "latest" tag`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			force, _ := cmd.Flags().GetBool("force")
+			return runMixtapesRm(configDirFn(), args[0], force)
+		},
+	}
+
+	cmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
+
+	return cmd
+}
+
+func runMixtapesRm(baseDir, ref string, force bool) error {
+	name, tag := mixtapes.ParseNameTag(ref)
+
+	display := name
+	if tag != "" {
+		display = name + ":" + tag
+	}
+
+	if !force {
+		if !ui.Confirm("Remove mixtape %q?", display) {
+			ui.Info("Aborted.")
+			return nil
+		}
+	}
+
+	if err := mixtapes.Remove(baseDir, name, tag); err != nil {
+		return err
+	}
+
+	ui.Success("Removed %s", display)
+	return nil
 }
