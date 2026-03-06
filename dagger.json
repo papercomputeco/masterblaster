@@ -1,6 +1,6 @@
 {
   "name": "masterblaster",
-  "engineVersion": "v0.19.10",
+  "engineVersion": "v0.20.1",
   "sdk": {
     "source": "go"
   },
@@ -25,7 +25,7 @@
     {
       "name": "ghrelease",
       "source": "github.com/papercomputeco/daggerverse/ghrelease@main",
-      "pin": "b3469bf3e3d2ec5584b4ec62b33b0dc6243ae5c2"
+      "pin": "37fe9f4213e1679b7909ff67d09b046a19fe629e"
     }
   ],
   "source": ".dagger"
