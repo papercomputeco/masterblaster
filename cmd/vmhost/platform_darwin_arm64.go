@@ -39,6 +39,10 @@ func (c *appleVirtController) Backend() string {
 	return "applevirt"
 }
 
+func (c *appleVirtController) Apply(ctx context.Context, configContent string, secrets map[string]string) error {
+	return c.backend.ControlPlaneApply(ctx, c.inst.Name, configContent, secrets)
+}
+
 func (c *appleVirtController) Wait() error {
 	return c.backend.WaitVM(c.inst.Name)
 }

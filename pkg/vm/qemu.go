@@ -712,6 +712,32 @@ func (q *QEMUBackend) postBoot(ctx context.Context, inst *Instance, cfg *config.
 	return nil
 }
 
+// ControlPlaneApply sends updated configuration and secrets to stereosd
+// via the control plane transport. It connects to stereosd, sends the
+// serialized jcard.toml via set_config, and re-injects all secrets.
+func (q *QEMUBackend) ControlPlaneApply(ctx context.Context, inst *Instance, configContent string, secrets map[string]string) error {
+	transport := q.controlPlaneTransport(inst)
+	client, err := vsock.Connect(transport, 10*time.Second)
+	if err != nil {
+		return fmt.Errorf("connecting to stereosd: %w", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	// Send the updated configuration
+	if err := client.SetConfig(ctx, configContent); err != nil {
+		return fmt.Errorf("setting guest config: %w", err)
+	}
+
+	// Re-inject secrets
+	for name, value := range secrets {
+		if err := client.InjectSecret(ctx, name, value); err != nil {
+			return fmt.Errorf("injecting secret %q: %w", name, err)
+		}
+	}
+
+	return nil
+}
+
 // controlPlaneShutdown sends a shutdown command to stereosd via the
 // control plane transport.
 func (q *QEMUBackend) controlPlaneShutdown(ctx context.Context, inst *Instance) error {

@@ -101,6 +101,15 @@ func (c *Client) Destroy(name string) (*daemon.Response, error) {
 	})
 }
 
+// Apply sends updated agent configuration to a running sandbox.
+func (c *Client) Apply(name, configPath string) (*daemon.Response, error) {
+	return c.call(&daemon.Request{
+		Method:     daemon.MethodApply,
+		Name:       name,
+		ConfigPath: configPath,
+	})
+}
+
 // List returns all known sandboxes.
 func (c *Client) List() (*daemon.Response, error) {
 	return c.call(&daemon.Request{Method: daemon.MethodList})

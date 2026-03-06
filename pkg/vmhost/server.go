@@ -33,6 +33,11 @@ type VMController interface {
 	// Backend returns the backend name ("qemu" or "applevirt").
 	Backend() string
 
+	// Apply sends updated configuration and secrets to stereosd inside the
+	// guest. It connects to the guest control plane, sends set_config with
+	// the serialized jcard.toml content, and re-injects all secrets.
+	Apply(ctx context.Context, configContent string, secrets map[string]string) error
+
 	// Wait blocks until the VM exits. It returns nil on clean exit
 	// or an error if the VM crashed.
 	Wait() error
@@ -175,6 +180,9 @@ func (s *Server) handleRequest(ctx context.Context, req *Request) Response {
 	case MethodInfo:
 		return s.handleInfo()
 
+	case MethodApply:
+		return s.handleApply(ctx, req)
+
 	default:
 		return Response{Error: fmt.Sprintf("unknown method: %s", req.Method)}
 	}
@@ -241,4 +249,20 @@ func (s *Server) handleInfo() Response {
 		SSHPort: s.controller.SSHPort(),
 		Backend: s.controller.Backend(),
 	}
+}
+
+func (s *Server) handleApply(ctx context.Context, req *Request) Response {
+	if req.ConfigContent == "" {
+		return Response{Error: "config_content is required for apply"}
+	}
+
+	s.logger.Printf("applying configuration (%d bytes, %d secrets)", len(req.ConfigContent), len(req.Secrets))
+
+	if err := s.controller.Apply(ctx, req.ConfigContent, req.Secrets); err != nil {
+		s.logger.Printf("apply failed: %v", err)
+		return Response{Error: fmt.Sprintf("apply failed: %v", err)}
+	}
+
+	s.logger.Println("apply completed successfully")
+	return Response{OK: true, State: s.controller.State()}
 }
