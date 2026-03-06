@@ -37,7 +37,7 @@ jobs:
           dagger call -m github.com/papercomputeco/daggerverse/ghrelease \
               --token=env://GH_TOKEN \
             with-repo \
-              --repo="${ github.repository }" \
+              --repo="${{ github.repository }}" \
             with-source \
               --source=. \
             create
