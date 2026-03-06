@@ -78,12 +78,9 @@ func ParseReference(rawRef string) (name.Reference, error) {
 // Zstd-compressed disk layers are decompressed during extraction. All
 // files are written flat into the tag directory.
 func PullOCI(baseDir, mixtapeName, tag string, ref name.Reference) error {
-	mixtapeDir := filepath.Join(baseDir, "mixtapes", mixtapeName, tag)
-	if err := os.MkdirAll(mixtapeDir, 0755); err != nil {
-		return fmt.Errorf("creating mixtape directory: %w", err)
-	}
-
-	// Fetch the remote descriptor. This may be an index or a single manifest.
+	// Fetch the remote descriptor first, before creating any directories.
+	// This avoids leaving empty directories on the filesystem if the
+	// registry returns an error (e.g. manifest unknown).
 	desc, err := remote.Get(ref)
 	if err != nil {
 		return fmt.Errorf("fetching manifest for %s: %w", ref.String(), err)
@@ -101,6 +98,12 @@ func PullOCI(baseDir, mixtapeName, tag string, ref name.Reference) error {
 
 	if len(layers) == 0 {
 		return fmt.Errorf("manifest for %s contains no layers", ref.String())
+	}
+
+	// Only create the directory once we know the manifest is valid.
+	mixtapeDir := filepath.Join(baseDir, "mixtapes", mixtapeName, tag)
+	if err := os.MkdirAll(mixtapeDir, 0755); err != nil {
+		return fmt.Errorf("creating mixtape directory: %w", err)
 	}
 
 	for i, layer := range layers {
