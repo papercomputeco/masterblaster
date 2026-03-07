@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/masterblaster/pkg/ui"
+	"github.com/papercomputeco/masterblaster/pkg/utils"
 
 	destroycmder "github.com/papercomputeco/masterblaster/cmd/destroy"
 	downcmder "github.com/papercomputeco/masterblaster/cmd/down"
@@ -20,6 +22,7 @@ import (
 	versioncmder "github.com/papercomputeco/masterblaster/cmd/version"
 	vmhostcmder "github.com/papercomputeco/masterblaster/cmd/vmhost"
 	"github.com/papercomputeco/masterblaster/pkg/mbconfig"
+	"github.com/papercomputeco/masterblaster/pkg/telemetry"
 )
 
 const rootLongDesc string = `Masterblaster (mb) is an AI agent sandbox management, build, and
@@ -39,12 +42,30 @@ func NewMbCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			disableTelem, _ := cmd.Flags().GetBool("disable-telemetry")
+			if os.Getenv("MB_DISABLE_TELEMETRY") == "1" {
+				disableTelem = true
+			}
+
+			telem := telemetry.NewPosthogClient(!disableTelem, utils.Version)
+			telem.CaptureInstall()
+			telem.CaptureCommandRun(cmd.Name())
+
+			cmd.SetContext(context.WithValue(cmd.Context(), telemetry.Key, telem))
+
 			return mbconfig.Init(cmd)
+		},
+		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
+			if telem := telemetry.FromContext(cmd.Context()); telem != nil {
+				telem.Done()
+			}
+			return nil
 		},
 	}
 
 	cmd.PersistentFlags().String("config-dir", "", "Config directory (default: $XDG_CONFIG_HOME/mb)")
 	cmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose output")
+	cmd.PersistentFlags().Bool("disable-telemetry", false, "Disable anonymous telemetry")
 
 	cmd.AddCommand(servecmder.NewServeCmd(mbconfig.ConfigDir))
 	cmd.AddCommand(initcmder.NewInitCmd())
