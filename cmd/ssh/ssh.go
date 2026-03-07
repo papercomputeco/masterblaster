@@ -9,6 +9,7 @@ import (
 
 	"github.com/papercomputeco/masterblaster/pkg/daemon/client"
 	"github.com/papercomputeco/masterblaster/pkg/ssh"
+	"github.com/papercomputeco/masterblaster/pkg/telemetry"
 	"github.com/papercomputeco/masterblaster/pkg/ui"
 )
 
@@ -35,12 +36,13 @@ func NewSSHCmd(configDirFn func() string, verboseFn func() bool) *cobra.Command 
 		Short: sshShortDesc,
 		Long:  sshLongDesc,
 		Args:  cobra.MaximumNArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			name := ""
 			if len(args) > 0 {
 				name = args[0]
 			}
-			return runSSH(configDirFn(), name, user, verboseFn())
+			telem := telemetry.FromContext(cmd.Context())
+			return runSSH(configDirFn(), name, user, verboseFn(), telem)
 		},
 	}
 
@@ -49,7 +51,7 @@ func NewSSHCmd(configDirFn func() string, verboseFn func() bool) *cobra.Command 
 	return cmd
 }
 
-func runSSH(baseDir, name, user string, verbose bool) error {
+func runSSH(baseDir, name, user string, verbose bool, telem *telemetry.PosthogClient) error {
 	if err := client.EnsureDaemon(baseDir); err != nil {
 		return err
 	}
@@ -71,6 +73,10 @@ func runSSH(baseDir, name, user string, verbose bool) error {
 
 	if verbose {
 		ui.Info("Connecting to %s@127.0.0.1:%d", user, sb.SSHPort)
+	}
+
+	if telem != nil {
+		telem.CaptureSSH()
 	}
 
 	return ssh.ExecSSH(user, "127.0.0.1", sb.SSHPort, sb.SSHKeyPath)
