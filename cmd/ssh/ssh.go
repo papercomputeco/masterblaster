@@ -42,6 +42,7 @@ func NewSSHCmd(configDirFn func() string, verboseFn func() bool) *cobra.Command 
 				name = args[0]
 			}
 			telem := telemetry.FromContext(cmd.Context())
+			telem.CaptureCommandRun(cmd.CommandPath())
 			return runSSH(configDirFn(), name, user, verboseFn(), telem)
 		},
 	}
@@ -76,6 +77,9 @@ func runSSH(baseDir, name, user string, verbose bool, telem *telemetry.PosthogCl
 	}
 
 	telem.CaptureSSH()
+	// ExecSSH replaces the process via syscall.Exec, so PersistentPostRunE
+	// never runs. Flush telemetry now to ensure events reach PostHog.
+	telem.Done()
 
 	return ssh.ExecSSH(user, "127.0.0.1", sb.SSHPort, sb.SSHKeyPath)
 }

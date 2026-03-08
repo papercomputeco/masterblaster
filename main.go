@@ -42,13 +42,12 @@ func NewMbCmd() *cobra.Command {
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			disableTelem, _ := cmd.Flags().GetBool("disable-telemetry")
-			if os.Getenv("MB_DISABLE_TELEMETRY") == "1" || telemetry.IsCI() {
+			if telemetry.IsCI() {
 				disableTelem = true
 			}
 
 			telem := telemetry.NewPosthogClient(!disableTelem, utils.Version)
 			telem.CaptureInstall()
-			telem.CaptureCommandRun(cmd.Name())
 
 			cmd.SetContext(telemetry.WithContext(cmd.Context(), telem))
 

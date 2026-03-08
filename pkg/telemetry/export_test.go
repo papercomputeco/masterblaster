@@ -3,8 +3,8 @@ package telemetry
 // SetTelemetryFilePath overrides the telemetry state file path for testing.
 // It returns the previous path so callers can restore it.
 func SetTelemetryFilePath(path string) string {
-	prev := telemetryFilePath
-	telemetryFilePath = path
+	prev := telemetryFilePathOverride
+	telemetryFilePathOverride = path
 	return prev
 }
 

@@ -1,6 +1,6 @@
 // Package telemetry provides anonymous usage tracking for the mb CLI.
-// Telemetry is opt-out via --disable-telemetry, MB_DISABLE_TELEMETRY=1,
-// or automatic CI environment detection.
+// Telemetry is opt-out via --disable-telemetry flag, config, or automatic
+// CI environment detection.
 package telemetry
 
 import (
@@ -13,9 +13,28 @@ import (
 	"github.com/google/uuid"
 )
 
-// telemetryFilePath is the path to the persistent telemetry state file.
-// It is a var so tests can override it.
-var telemetryFilePath = filepath.Join(os.Getenv("HOME"), ".mb", "telemetry.json")
+// telemetryFileName is the state file name within ~/.mb/.
+const telemetryFileName = "telemetry.json"
+
+// telemetryDir returns the directory for the telemetry state file.
+// Resolved at call time so $HOME changes and os.UserHomeDir work correctly.
+func telemetryDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), ".mb")
+	}
+	return filepath.Join(home, ".mb")
+}
+
+// telemetryFilePathOverride allows tests to override the state file path.
+var telemetryFilePathOverride string
+
+func resolvedTelemetryFilePath() string {
+	if telemetryFilePathOverride != "" {
+		return telemetryFilePathOverride
+	}
+	return filepath.Join(telemetryDir(), telemetryFileName)
+}
 
 // State is the persistent telemetry state stored in ~/.mb/telemetry.json.
 type State struct {
@@ -26,24 +45,26 @@ type State struct {
 // getOrCreateUniqueID reads or creates the user's anonymous unique ID.
 // Returns the ID, whether this is the first run, and any error.
 func getOrCreateUniqueID() (string, bool, error) {
-	if _, err := os.Stat(telemetryFilePath); os.IsNotExist(err) {
-		return createTelemetryUUID()
+	fp := resolvedTelemetryFilePath()
+
+	if _, err := os.Stat(fp); os.IsNotExist(err) {
+		return createTelemetryUUID(fp)
 	}
 
-	data, err := os.ReadFile(telemetryFilePath)
+	data, err := os.ReadFile(fp)
 	if err != nil {
-		return createTelemetryUUID()
+		return createTelemetryUUID(fp)
 	}
 
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil || state.ID == "" {
-		return createTelemetryUUID()
+		return createTelemetryUUID(fp)
 	}
 
 	return state.ID, false, nil
 }
 
-func createTelemetryUUID() (string, bool, error) {
+func createTelemetryUUID(fp string) (string, bool, error) {
 	newUUID := uuid.New().String()
 
 	state := State{
@@ -56,11 +77,11 @@ func createTelemetryUUID() (string, bool, error) {
 		return "", true, fmt.Errorf("creating telemetry data: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(telemetryFilePath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(fp), 0755); err != nil {
 		return "", true, fmt.Errorf("creating telemetry directory: %w", err)
 	}
 
-	if err := os.WriteFile(telemetryFilePath, data, 0600); err != nil {
+	if err := os.WriteFile(fp, data, 0600); err != nil {
 		return "", true, fmt.Errorf("writing telemetry file: %w", err)
 	}
 

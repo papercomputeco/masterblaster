@@ -43,6 +43,7 @@ func NewPullCmd(configDirFn func() string) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			telem := telemetry.FromContext(cmd.Context())
+			telem.CaptureCommandRun(cmd.CommandPath())
 			return runPull(configDirFn(), args[0], telem)
 		},
 	}

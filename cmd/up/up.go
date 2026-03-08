@@ -40,6 +40,7 @@ func NewUpCmd(configDirFn func() string) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			telem := telemetry.FromContext(cmd.Context())
+			telem.CaptureCommandRun(cmd.CommandPath())
 			return runUp(configDirFn(), cfgPath, telem)
 		},
 	}
@@ -84,7 +85,11 @@ func runUp(baseDir, cfgPath string, telem *telemetry.PosthogClient) error {
 		return err
 	}
 
-	telem.CaptureUp("", true)
+	mixtapeName := ""
+	if len(resp.Sandboxes) > 0 {
+		mixtapeName = resp.Sandboxes[0].Mixtape
+	}
+	telem.CaptureUp(mixtapeName, true)
 
 	if len(resp.Sandboxes) > 0 {
 		sb := resp.Sandboxes[0]

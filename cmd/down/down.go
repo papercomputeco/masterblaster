@@ -42,6 +42,7 @@ func NewDownCmd(configDirFn func() string) *cobra.Command {
 				name = args[0]
 			}
 			telem := telemetry.FromContext(cmd.Context())
+			telem.CaptureCommandRun(cmd.CommandPath())
 			return runDown(configDirFn(), name, force, telem)
 		},
 	}

@@ -31,15 +31,19 @@ func FromContext(ctx context.Context) *PosthogClient {
 // All capture methods are nil-safe: calling them on a nil *PosthogClient is a no-op.
 type PosthogClient struct {
 	client     posthog.Client
-	activated  bool
 	uniqueID   string
 	isFirstRun bool
 	version    string
 }
 
 // NewPosthogClient creates a new telemetry client.
-// If activated is false, all capture methods are no-ops.
+// Returns nil when activated is false, skipping the PostHog connection and
+// UUID file creation entirely. Nil-safe methods make this transparent to callers.
 func NewPosthogClient(activated bool, version string) *PosthogClient {
+	if !activated {
+		return nil
+	}
+
 	client, err := posthog.NewWithConfig(
 		writeOnlyPublicPosthogKey,
 		posthog.Config{
@@ -47,15 +51,13 @@ func NewPosthogClient(activated bool, version string) *PosthogClient {
 		},
 	)
 	if err != nil {
-		// Config is static; this should never happen.
-		return &PosthogClient{activated: false}
+		return nil
 	}
 
 	uniqueID, isFirstRun, _ := getOrCreateUniqueID()
 
 	return &PosthogClient{
 		client:     client,
-		activated:  activated,
 		uniqueID:   uniqueID,
 		isFirstRun: isFirstRun,
 		version:    version,
@@ -64,7 +66,7 @@ func NewPosthogClient(activated bool, version string) *PosthogClient {
 
 // Done flushes pending events and closes the client.
 func (p *PosthogClient) Done() {
-	if p == nil || p.client == nil {
+	if p == nil {
 		return
 	}
 	_ = p.client.Close()
@@ -79,7 +81,7 @@ func (p *PosthogClient) baseProperties() posthog.Properties {
 
 // CaptureInstall tracks first-time installs.
 func (p *PosthogClient) CaptureInstall() {
-	if p == nil || !p.activated || !p.isFirstRun {
+	if p == nil || !p.isFirstRun {
 		return
 	}
 	props := p.baseProperties().Set("event_type", "install")
@@ -92,7 +94,7 @@ func (p *PosthogClient) CaptureInstall() {
 
 // CaptureCommandRun tracks command usage for DAU calculation.
 func (p *PosthogClient) CaptureCommandRun(command string) {
-	if p == nil || !p.activated {
+	if p == nil {
 		return
 	}
 	props := p.baseProperties().Set("command", command)
@@ -105,7 +107,7 @@ func (p *PosthogClient) CaptureCommandRun(command string) {
 
 // CaptureUp tracks sandbox creation.
 func (p *PosthogClient) CaptureUp(mixtape string, success bool) {
-	if p == nil || !p.activated {
+	if p == nil {
 		return
 	}
 	props := p.baseProperties().
@@ -120,7 +122,7 @@ func (p *PosthogClient) CaptureUp(mixtape string, success bool) {
 
 // CaptureDown tracks sandbox shutdown.
 func (p *PosthogClient) CaptureDown(success bool) {
-	if p == nil || !p.activated {
+	if p == nil {
 		return
 	}
 	props := p.baseProperties().Set("success", success)
@@ -133,7 +135,7 @@ func (p *PosthogClient) CaptureDown(success bool) {
 
 // CaptureSSH tracks SSH connections.
 func (p *PosthogClient) CaptureSSH() {
-	if p == nil || !p.activated {
+	if p == nil {
 		return
 	}
 	_ = p.client.Enqueue(posthog.Capture{
@@ -145,7 +147,7 @@ func (p *PosthogClient) CaptureSSH() {
 
 // CapturePull tracks mixtape pulls.
 func (p *PosthogClient) CapturePull(mixtape string, success bool) {
-	if p == nil || !p.activated {
+	if p == nil {
 		return
 	}
 	props := p.baseProperties().
@@ -160,7 +162,7 @@ func (p *PosthogClient) CapturePull(mixtape string, success bool) {
 
 // CaptureError tracks errors anonymously.
 func (p *PosthogClient) CaptureError(command string, errType string) {
-	if p == nil || !p.activated {
+	if p == nil {
 		return
 	}
 	props := p.baseProperties().
