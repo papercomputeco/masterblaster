@@ -14,6 +14,7 @@ const (
 	MethodDestroy RPCMethod = "destroy"
 	MethodList    RPCMethod = "list"
 	MethodPing    RPCMethod = "ping"
+	MethodApply   RPCMethod = "apply"
 )
 
 // Request is the wire format for CLI -> daemon RPC calls.
