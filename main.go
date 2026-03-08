@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -43,7 +42,7 @@ func NewMbCmd() *cobra.Command {
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			disableTelem, _ := cmd.Flags().GetBool("disable-telemetry")
-			if os.Getenv("MB_DISABLE_TELEMETRY") == "1" {
+			if os.Getenv("MB_DISABLE_TELEMETRY") == "1" || telemetry.IsCI() {
 				disableTelem = true
 			}
 
@@ -51,14 +50,12 @@ func NewMbCmd() *cobra.Command {
 			telem.CaptureInstall()
 			telem.CaptureCommandRun(cmd.Name())
 
-			cmd.SetContext(context.WithValue(cmd.Context(), telemetry.Key, telem))
+			cmd.SetContext(telemetry.WithContext(cmd.Context(), telem))
 
 			return mbconfig.Init(cmd)
 		},
 		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
-			if telem := telemetry.FromContext(cmd.Context()); telem != nil {
-				telem.Done()
-			}
+			telemetry.FromContext(cmd.Context()).Done()
 			return nil
 		},
 	}

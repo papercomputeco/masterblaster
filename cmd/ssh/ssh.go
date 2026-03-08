@@ -75,9 +75,7 @@ func runSSH(baseDir, name, user string, verbose bool, telem *telemetry.PosthogCl
 		ui.Info("Connecting to %s@127.0.0.1:%d", user, sb.SSHPort)
 	}
 
-	if telem != nil {
-		telem.CaptureSSH()
-	}
+	telem.CaptureSSH()
 
 	return ssh.ExecSSH(user, "127.0.0.1", sb.SSHPort, sb.SSHKeyPath)
 }

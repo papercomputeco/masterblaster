@@ -62,9 +62,7 @@ func runDown(baseDir, name string, force bool, telem *telemetry.PosthogClient) e
 		return err
 	})
 
-	if telem != nil {
-		telem.CaptureDown(err == nil)
-	}
+	telem.CaptureDown(err == nil)
 
 	return err
 }

@@ -1,5 +1,6 @@
 // Package telemetry provides anonymous usage tracking for the mb CLI.
-// Telemetry is opt-out via --disable-telemetry or MB_DISABLE_TELEMETRY=1.
+// Telemetry is opt-out via --disable-telemetry, MB_DISABLE_TELEMETRY=1,
+// or automatic CI environment detection.
 package telemetry
 
 import (
@@ -12,9 +13,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// telemetryFilePath is the path to the persistent telemetry state file.
+// It is a var so tests can override it.
 var telemetryFilePath = filepath.Join(os.Getenv("HOME"), ".mb", "telemetry.json")
 
-type userTelemetryConfig struct {
+// State is the persistent telemetry state stored in ~/.mb/telemetry.json.
+type State struct {
 	ID           string `json:"id"`
 	FirstRunDate string `json:"first_run_date,omitempty"`
 }
@@ -31,23 +35,23 @@ func getOrCreateUniqueID() (string, bool, error) {
 		return createTelemetryUUID()
 	}
 
-	var teleData userTelemetryConfig
-	if err := json.Unmarshal(data, &teleData); err != nil || teleData.ID == "" {
+	var state State
+	if err := json.Unmarshal(data, &state); err != nil || state.ID == "" {
 		return createTelemetryUUID()
 	}
 
-	return teleData.ID, false, nil
+	return state.ID, false, nil
 }
 
 func createTelemetryUUID() (string, bool, error) {
 	newUUID := uuid.New().String()
 
-	teleData := userTelemetryConfig{
+	state := State{
 		ID:           newUUID,
 		FirstRunDate: time.Now().UTC().Format(time.RFC3339),
 	}
 
-	data, err := json.Marshal(teleData)
+	data, err := json.Marshal(state)
 	if err != nil {
 		return "", true, fmt.Errorf("creating telemetry data: %w", err)
 	}
@@ -61,4 +65,26 @@ func createTelemetryUUID() (string, bool, error) {
 	}
 
 	return newUUID, true, nil
+}
+
+// ciEnvVars is the list of environment variables used to detect CI environments.
+var ciEnvVars = []string{
+	"CI",
+	"GITHUB_ACTIONS",
+	"GITLAB_CI",
+	"CIRCLECI",
+	"TRAVIS",
+	"JENKINS_URL",
+	"BUILDKITE",
+	"CODEBUILD_BUILD_ID",
+}
+
+// IsCI returns true if the process appears to be running in a CI environment.
+func IsCI() bool {
+	for _, env := range ciEnvVars {
+		if os.Getenv(env) != "" {
+			return true
+		}
+	}
+	return false
 }

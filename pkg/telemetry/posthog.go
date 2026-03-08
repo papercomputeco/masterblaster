@@ -16,18 +16,19 @@ var (
 // contextKey is an unexported type for context keys in this package.
 type contextKey struct{}
 
-// Key is the context key used to store and retrieve the PosthogClient.
-var Key = contextKey{}
+// WithContext returns a copy of ctx with the telemetry client attached.
+func WithContext(ctx context.Context, c *PosthogClient) context.Context {
+	return context.WithValue(ctx, contextKey{}, c)
+}
 
 // FromContext retrieves the PosthogClient from a context. Returns nil if absent.
 func FromContext(ctx context.Context) *PosthogClient {
-	if t, ok := ctx.Value(Key).(*PosthogClient); ok {
-		return t
-	}
-	return nil
+	c, _ := ctx.Value(contextKey{}).(*PosthogClient)
+	return c
 }
 
 // PosthogClient wraps the PostHog SDK for anonymous CLI telemetry.
+// All capture methods are nil-safe: calling them on a nil *PosthogClient is a no-op.
 type PosthogClient struct {
 	client     posthog.Client
 	activated  bool
@@ -63,9 +64,10 @@ func NewPosthogClient(activated bool, version string) *PosthogClient {
 
 // Done flushes pending events and closes the client.
 func (p *PosthogClient) Done() {
-	if p.client != nil {
-		_ = p.client.Close()
+	if p == nil || p.client == nil {
+		return
 	}
+	_ = p.client.Close()
 }
 
 func (p *PosthogClient) baseProperties() posthog.Properties {
@@ -77,7 +79,7 @@ func (p *PosthogClient) baseProperties() posthog.Properties {
 
 // CaptureInstall tracks first-time installs.
 func (p *PosthogClient) CaptureInstall() {
-	if !p.activated || !p.isFirstRun {
+	if p == nil || !p.activated || !p.isFirstRun {
 		return
 	}
 	props := p.baseProperties().Set("event_type", "install")
@@ -90,7 +92,7 @@ func (p *PosthogClient) CaptureInstall() {
 
 // CaptureCommandRun tracks command usage for DAU calculation.
 func (p *PosthogClient) CaptureCommandRun(command string) {
-	if !p.activated {
+	if p == nil || !p.activated {
 		return
 	}
 	props := p.baseProperties().Set("command", command)
@@ -103,7 +105,7 @@ func (p *PosthogClient) CaptureCommandRun(command string) {
 
 // CaptureUp tracks sandbox creation.
 func (p *PosthogClient) CaptureUp(mixtape string, success bool) {
-	if !p.activated {
+	if p == nil || !p.activated {
 		return
 	}
 	props := p.baseProperties().
@@ -118,7 +120,7 @@ func (p *PosthogClient) CaptureUp(mixtape string, success bool) {
 
 // CaptureDown tracks sandbox shutdown.
 func (p *PosthogClient) CaptureDown(success bool) {
-	if !p.activated {
+	if p == nil || !p.activated {
 		return
 	}
 	props := p.baseProperties().Set("success", success)
@@ -131,7 +133,7 @@ func (p *PosthogClient) CaptureDown(success bool) {
 
 // CaptureSSH tracks SSH connections.
 func (p *PosthogClient) CaptureSSH() {
-	if !p.activated {
+	if p == nil || !p.activated {
 		return
 	}
 	_ = p.client.Enqueue(posthog.Capture{
@@ -143,7 +145,7 @@ func (p *PosthogClient) CaptureSSH() {
 
 // CapturePull tracks mixtape pulls.
 func (p *PosthogClient) CapturePull(mixtape string, success bool) {
-	if !p.activated {
+	if p == nil || !p.activated {
 		return
 	}
 	props := p.baseProperties().
@@ -158,7 +160,7 @@ func (p *PosthogClient) CapturePull(mixtape string, success bool) {
 
 // CaptureError tracks errors anonymously.
 func (p *PosthogClient) CaptureError(command string, errType string) {
-	if !p.activated {
+	if p == nil || !p.activated {
 		return
 	}
 	props := p.baseProperties().

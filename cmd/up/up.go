@@ -80,15 +80,11 @@ func runUp(baseDir, cfgPath string, telem *telemetry.PosthogClient) error {
 		resp, stepErr = c.Up("", cfgPath)
 		return stepErr
 	}); err != nil {
-		if telem != nil {
-			telem.CaptureUp("", false)
-		}
+		telem.CaptureUp("", false)
 		return err
 	}
 
-	if telem != nil {
-		telem.CaptureUp("", true)
-	}
+	telem.CaptureUp("", true)
 
 	if len(resp.Sandboxes) > 0 {
 		sb := resp.Sandboxes[0]

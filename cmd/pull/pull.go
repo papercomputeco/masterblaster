@@ -53,9 +53,7 @@ func runPull(baseDir, rawRef string, telem *telemetry.PosthogClient) error {
 		return mixtapes.Pull(baseDir, rawRef)
 	})
 
-	if telem != nil {
-		telem.CapturePull(rawRef, err == nil)
-	}
+	telem.CapturePull(rawRef, err == nil)
 
 	return err
 }
