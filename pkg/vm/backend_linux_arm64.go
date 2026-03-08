@@ -1,17 +1,17 @@
-//go:build linux
+//go:build linux && arm64
 
 package vm
 
-// NewPlatformBackend returns the appropriate VM backend for Linux.
-// This returns the QEMU backend configured for KVM acceleration with
-// native vsock support via vhost-vsock-pci.
+// NewPlatformBackend returns the QEMU backend for Linux on ARM64,
+// configured for KVM acceleration with native vsock support.
 func NewPlatformBackend(baseDir string) (Backend, error) {
-	// TODO: Implement KVM/libvirt backend for better performance.
+	const binary = "qemu-system-aarch64"
 
 	platform := &QEMUPlatformConfig{
-		Accelerator: "kvm",
-		Binary:      "qemu-system-aarch64",
-		MachineType: "virt",
+		Accelerator:  "kvm",
+		Binary:       binary,
+		MachineType:  "virt",
+		MachineProps: "highmem=on",
 		EFISearchPaths: []string{
 			"{qemu_prefix}/share/qemu/edk2-aarch64-code.fd",
 			"/usr/share/qemu/edk2-aarch64-code.fd",
@@ -23,6 +23,7 @@ func NewPlatformBackend(baseDir string) (Backend, error) {
 		DirectKernelBoot: true,
 		DiskAIO:          "io_uring",
 		DiskCache:        "none",
+		BridgeHelper:     findBridgeHelper(binary),
 	}
 
 	return NewQEMUBackend(baseDir, platform), nil

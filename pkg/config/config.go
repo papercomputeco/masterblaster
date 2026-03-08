@@ -77,6 +77,11 @@ type NetworkConfig struct {
 	// Mode is the network mode: "nat" (default), "bridged", or "none".
 	Mode string `toml:"mode"`
 
+	// Bridge is the host bridge interface for bridged mode on Linux
+	// (e.g. "virbr0", "br0"). Ignored on macOS where vmnet-shared is
+	// used instead. Defaults to "virbr0" (the libvirt default NAT bridge).
+	Bridge string `toml:"bridge"`
+
 	// Forwards are port forwards from host to sandbox (nat mode only).
 	Forwards []PortForward `toml:"forwards"`
 
