@@ -40,23 +40,8 @@ func NewMbCmd() *cobra.Command {
 		Long:          rootLongDesc,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			disableTelem, _ := cmd.Flags().GetBool("disable-telemetry")
-			if telemetry.IsCI() {
-				disableTelem = true
-			}
-
-			telem := telemetry.NewPosthogClient(!disableTelem, utils.Version)
-			telem.CaptureInstall()
-
-			cmd.SetContext(telemetry.WithContext(cmd.Context(), telem))
-
-			return mbconfig.Init(cmd)
-		},
-		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
-			telemetry.FromContext(cmd.Context()).Done()
-			return nil
-		},
+		PersistentPreRunE:  initTelemetry,
+		PersistentPostRunE: closeTelemetry,
 	}
 
 	cmd.PersistentFlags().String("config-dir", "", "Config directory (default: $XDG_CONFIG_HOME/mb)")
@@ -77,6 +62,32 @@ func NewMbCmd() *cobra.Command {
 	cmd.AddCommand(vmhostcmder.NewVMHostCmd(mbconfig.ConfigDir))
 
 	return cmd
+}
+
+// initTelemetry initializes anonymous telemetry and stores the client in the
+// command context. Telemetry is silently skipped when disabled via flag or CI
+// detection -- errors during init never block command execution.
+func initTelemetry(cmd *cobra.Command, _ []string) error {
+	if disabled, _ := cmd.Flags().GetBool("disable-telemetry"); disabled {
+		return mbconfig.Init(cmd)
+	}
+
+	if telemetry.IsCI() {
+		return mbconfig.Init(cmd)
+	}
+
+	telem := telemetry.NewPosthogClient(true, utils.Version)
+	telem.CaptureInstall()
+
+	cmd.SetContext(telemetry.WithContext(cmd.Context(), telem))
+
+	return mbconfig.Init(cmd)
+}
+
+// closeTelemetry flushes pending events and shuts down the PostHog client.
+func closeTelemetry(cmd *cobra.Command, _ []string) error {
+	telemetry.FromContext(cmd.Context()).Done()
+	return nil
 }
 
 func main() {

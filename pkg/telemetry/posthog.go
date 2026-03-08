@@ -76,7 +76,8 @@ func (p *PosthogClient) baseProperties() posthog.Properties {
 	return posthog.NewProperties().
 		Set("version", p.version).
 		Set("os", runtime.GOOS).
-		Set("arch", runtime.GOARCH)
+		Set("arch", runtime.GOARCH).
+		Set("$lib", "mb-cli")
 }
 
 // CaptureInstall tracks first-time installs.
