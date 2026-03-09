@@ -12,6 +12,7 @@ import (
 
 	"github.com/papercomputeco/masterblaster/pkg/daemon"
 	"github.com/papercomputeco/masterblaster/pkg/daemon/client"
+	"github.com/papercomputeco/masterblaster/pkg/telemetry"
 	"github.com/papercomputeco/masterblaster/pkg/ui"
 )
 
@@ -37,8 +38,10 @@ func NewUpCmd(configDirFn func() string) *cobra.Command {
 		Short: upShortDesc,
 		Long:  upLongDesc,
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runUp(configDirFn(), cfgPath)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			telem := telemetry.FromContext(cmd.Context())
+			telem.CaptureCommandRun(cmd.CommandPath())
+			return runUp(configDirFn(), cfgPath, telem)
 		},
 	}
 
@@ -47,7 +50,7 @@ func NewUpCmd(configDirFn func() string) *cobra.Command {
 	return cmd
 }
 
-func runUp(baseDir, cfgPath string) error {
+func runUp(baseDir, cfgPath string, telem *telemetry.PosthogClient) error {
 	// Resolve config path
 	if cfgPath == "" {
 		cwd, err := os.Getwd()
@@ -78,8 +81,15 @@ func runUp(baseDir, cfgPath string) error {
 		resp, stepErr = c.Up("", cfgPath)
 		return stepErr
 	}); err != nil {
+		telem.CaptureUp("", false)
 		return err
 	}
+
+	mixtapeName := ""
+	if len(resp.Sandboxes) > 0 {
+		mixtapeName = resp.Sandboxes[0].Mixtape
+	}
+	telem.CaptureUp(mixtapeName, true)
 
 	if len(resp.Sandboxes) > 0 {
 		sb := resp.Sandboxes[0]

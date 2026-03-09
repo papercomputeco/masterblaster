@@ -92,6 +92,10 @@ func (m *Masterblaster) BuildRelease(
 
 	// Git commit SHA of build
 	commit string,
+
+	// PostHog telemetry public key
+	// +optional
+	postHogPublicKey string,
 ) *dagger.Directory {
 	buildtime := time.Now()
 
@@ -101,6 +105,10 @@ func (m *Masterblaster) BuildRelease(
 		fmt.Sprintf("-X 'github.com/papercomputeco/masterblaster/pkg/utils.Version=%s'", version),
 		fmt.Sprintf("-X 'github.com/papercomputeco/masterblaster/pkg/utils.Sha=%s'", commit),
 		fmt.Sprintf("-X 'github.com/papercomputeco/masterblaster/pkg/utils.Buildtime=%s'", buildtime),
+	}
+
+	if postHogPublicKey != "" {
+		ldflags = append(ldflags, fmt.Sprintf("-X 'github.com/papercomputeco/masterblaster/pkg/telemetry.PostHogAPIKey=%s'", postHogPublicKey))
 	}
 
 	dir := m.Build(ctx, strings.Join(ldflags, " "))
