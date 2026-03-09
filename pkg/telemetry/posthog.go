@@ -8,9 +8,13 @@ import (
 )
 
 var (
-	// Write-only key, safe to embed in source.
-	writeOnlyPublicPosthogKey = "phc_xCBFT1jetPLJIRGTqJ9Q0YuG5I1jhXtUkxYkNBEAXRY"
-	posthogEndpoint           = "https://us.i.posthog.com"
+	// PostHogAPIKey is the PostHog write-only project API key.
+	// Injected at build time via ldflags; defaults to empty (telemetry disabled).
+	PostHogAPIKey = ""
+
+	// PostHogEndpoint is the PostHog ingestion endpoint.
+	// Injected at build time via ldflags; defaults to the US region.
+	PostHogEndpoint = "https://us.i.posthog.com"
 )
 
 // contextKey is an unexported type for context keys in this package.
@@ -37,17 +41,18 @@ type PosthogClient struct {
 }
 
 // NewPosthogClient creates a new telemetry client.
-// Returns nil when activated is false, skipping the PostHog connection and
-// UUID file creation entirely. Nil-safe methods make this transparent to callers.
+// Returns nil when activated is false or PostHogAPIKey is empty, skipping the
+// PostHog connection and UUID file creation entirely. Nil-safe methods make
+// this transparent to callers.
 func NewPosthogClient(activated bool, version string) *PosthogClient {
-	if !activated {
+	if !activated || PostHogAPIKey == "" {
 		return nil
 	}
 
 	client, err := posthog.NewWithConfig(
-		writeOnlyPublicPosthogKey,
+		PostHogAPIKey,
 		posthog.Config{
-			Endpoint: posthogEndpoint,
+			Endpoint: PostHogEndpoint,
 		},
 	)
 	if err != nil {

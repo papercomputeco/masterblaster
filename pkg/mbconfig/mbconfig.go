@@ -42,10 +42,16 @@ func Init(cmd *cobra.Command) error {
 			return err
 		}
 	}
+	if f := cmd.Root().PersistentFlags().Lookup("disable-telemetry"); f != nil {
+		if err := viper.BindPFlag("disable-telemetry", f); err != nil {
+			return err
+		}
+	}
 
 	// Set defaults after binding so flags/env take precedence.
 	viper.SetDefault("config-dir", defaultConfigDir())
 	viper.SetDefault("verbose", false)
+	viper.SetDefault("disable-telemetry", false)
 
 	// Attempt to read a config file from the resolved config directory.
 	// This is intentionally best-effort: if the file doesn't exist yet,

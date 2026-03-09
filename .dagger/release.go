@@ -29,8 +29,12 @@ func (m *Masterblaster) ReleaseLatest(
 
 	// Bucket secret access key
 	secretAccessKey *dagger.Secret,
+
+	// PostHog telemetry public key
+	// +optional
+	postHogPublicKey string,
 ) (*dagger.Directory, error) {
-	artifacts := m.BuildRelease(ctx, version, commit)
+	artifacts := m.BuildRelease(ctx, version, commit, postHogPublicKey)
 
 	uploader := dag.Bucketuploader(endpoint, bucket, accessKeyId, secretAccessKey)
 	if err := uploader.UploadLatest(ctx, artifacts, version); err != nil {
@@ -59,8 +63,12 @@ func (m *Masterblaster) ReleaseNightly(
 
 	// Bucket secret access key
 	secretAccessKey *dagger.Secret,
+
+	// PostHog telemetry public key
+	// +optional
+	postHogPublicKey string,
 ) (*dagger.Directory, error) {
-	artifacts := m.BuildRelease(ctx, "nightly", commit)
+	artifacts := m.BuildRelease(ctx, "nightly", commit, postHogPublicKey)
 
 	uploader := dag.Bucketuploader(endpoint, bucket, accessKeyId, secretAccessKey)
 	if err := uploader.UploadNightly(ctx, artifacts); err != nil {

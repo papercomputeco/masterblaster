@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/papercomputeco/masterblaster/pkg/ui"
 	"github.com/papercomputeco/masterblaster/pkg/utils"
@@ -65,15 +66,21 @@ func NewMbCmd() *cobra.Command {
 }
 
 // initTelemetry initializes anonymous telemetry and stores the client in the
-// command context. Telemetry is silently skipped when disabled via flag or CI
-// detection -- errors during init never block command execution.
+// command context. Telemetry is silently skipped when disabled via config/flag/env
+// or CI detection -- errors during init never block command execution.
 func initTelemetry(cmd *cobra.Command, _ []string) error {
-	if disabled, _ := cmd.Flags().GetBool("disable-telemetry"); disabled {
-		return mbconfig.Init(cmd)
+	// Init config first so Viper binds the disable-telemetry flag/env/config.
+	if err := mbconfig.Init(cmd); err != nil {
+		return err
+	}
+
+	// Viper handles flag < env < config precedence for disable-telemetry.
+	if viper.GetBool("disable-telemetry") {
+		return nil
 	}
 
 	if telemetry.IsCI() {
-		return mbconfig.Init(cmd)
+		return nil
 	}
 
 	telem := telemetry.NewPosthogClient(true, utils.Version)
@@ -81,7 +88,7 @@ func initTelemetry(cmd *cobra.Command, _ []string) error {
 
 	cmd.SetContext(telemetry.WithContext(cmd.Context(), telem))
 
-	return mbconfig.Init(cmd)
+	return nil
 }
 
 // closeTelemetry flushes pending events and shuts down the PostHog client.
