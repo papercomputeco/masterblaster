@@ -14,7 +14,7 @@ Sandboxes are ephemeral, isolated, reproducible, and focused on security.
 ## Install
 
 ```bash
-curl -fsSL https://mb.stereos.ai/latest/install.sh | bash
+curl -fsSL https://mb.stereos.ai/install | bash
 ```
 
 ## Quick start
