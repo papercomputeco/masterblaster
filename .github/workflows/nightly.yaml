@@ -79,6 +79,7 @@ jobs:
           dagger call \
             release-nightly \
               --commit="${{ github.sha }}" \
+              --post-hog-public-key="${{ secrets.POSTHOG_API_KEY }}" \
               --endpoint=env://BUCKET_ENDPOINT \
               --bucket=env://BUCKET_NAME \
               --access-key-id=env://BUCKET_ACCESS_KEY_ID \
@@ -114,7 +115,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Build and codesign darwin/arm64 binary
-        run: make apple-build VERSION=nightly COMMIT="${{ github.sha }}"
+        run: make apple-build VERSION=nightly COMMIT="${{ github.sha }}" POSTHOG_API_KEY="${{ secrets.POSTHOG_API_KEY }}"
 
       - name: Generate checksum
         run: shasum -a 256 build/darwin/arm64/mb > build/darwin/arm64/mb.sha256

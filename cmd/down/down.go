@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/masterblaster/pkg/daemon/client"
+	"github.com/papercomputeco/masterblaster/pkg/telemetry"
 	"github.com/papercomputeco/masterblaster/pkg/ui"
 )
 
@@ -35,12 +36,14 @@ func NewDownCmd(configDirFn func() string) *cobra.Command {
 		Short: downShortDesc,
 		Long:  downLongDesc,
 		Args:  cobra.MaximumNArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			name := ""
 			if len(args) > 0 {
 				name = args[0]
 			}
-			return runDown(configDirFn(), name, force)
+			telem := telemetry.FromContext(cmd.Context())
+			telem.CaptureCommandRun(cmd.CommandPath())
+			return runDown(configDirFn(), name, force, telem)
 		},
 	}
 
@@ -49,14 +52,18 @@ func NewDownCmd(configDirFn func() string) *cobra.Command {
 	return cmd
 }
 
-func runDown(baseDir, name string, force bool) error {
+func runDown(baseDir, name string, force bool, telem *telemetry.PosthogClient) error {
 	if err := client.EnsureDaemon(baseDir); err != nil {
 		return err
 	}
 
 	c := client.New(baseDir)
-	return ui.Step(os.Stderr, "Stopping sandbox...", func() error {
+	err := ui.Step(os.Stderr, "Stopping sandbox...", func() error {
 		_, err := c.Down(name, force)
 		return err
 	})
+
+	telem.CaptureDown(err == nil)
+
+	return err
 }

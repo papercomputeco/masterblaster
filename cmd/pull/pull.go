@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/papercomputeco/masterblaster/pkg/mixtapes"
+	"github.com/papercomputeco/masterblaster/pkg/telemetry"
 	"github.com/papercomputeco/masterblaster/pkg/ui"
 )
 
@@ -40,14 +41,20 @@ func NewPullCmd(configDirFn func() string) *cobra.Command {
 		Short: pullShortDesc,
 		Long:  pullLongDesc,
 		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			return runPull(configDirFn(), args[0])
+		RunE: func(cmd *cobra.Command, args []string) error {
+			telem := telemetry.FromContext(cmd.Context())
+			telem.CaptureCommandRun(cmd.CommandPath())
+			return runPull(configDirFn(), args[0], telem)
 		},
 	}
 }
 
-func runPull(baseDir, rawRef string) error {
-	return ui.Step(os.Stderr, fmt.Sprintf("Pulling mixtape %q...", rawRef), func() error {
+func runPull(baseDir, rawRef string, telem *telemetry.PosthogClient) error {
+	err := ui.Step(os.Stderr, fmt.Sprintf("Pulling mixtape %q...", rawRef), func() error {
 		return mixtapes.Pull(baseDir, rawRef)
 	})
+
+	telem.CapturePull(rawRef, err == nil)
+
+	return err
 }
