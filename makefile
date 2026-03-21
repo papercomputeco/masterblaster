@@ -12,11 +12,8 @@ POSTHOG_API_KEY ?=
 LDFLAGS := -s -w \
 	-X 'github.com/papercomputeco/masterblaster/pkg/utils.Version=$(VERSION)' \
 	-X 'github.com/papercomputeco/masterblaster/pkg/utils.Sha=$(COMMIT)' \
-	-X 'github.com/papercomputeco/masterblaster/pkg/utils.Buildtime=$(BUILDTIME)'
-
-ifneq ($(POSTHOG_API_KEY),)
-LDFLAGS += -X 'github.com/papercomputeco/masterblaster/pkg/telemetry.PostHogAPIKey=$(POSTHOG_API_KEY)'
-endif
+	-X 'github.com/papercomputeco/masterblaster/pkg/utils.Buildtime=$(BUILDTIME)' \
+	-X 'github.com/papercomputeco/masterblaster/pkg/telemetry.PostHogAPIKey=$(POSTHOG_API_KEY)'
 
 .PHONY: build
 build: ## Builds all cross-platform release artifacts via Dagger
@@ -24,7 +21,7 @@ build: ## Builds all cross-platform release artifacts via Dagger
 		build-release \
 			--version $(VERSION) \
 			--commit $(COMMIT) \
-			$(if $(POSTHOG_API_KEY),--post-hog-public-key $(POSTHOG_API_KEY)) \
+			--post-hog-public-key="$(POSTHOG_API_KEY)" \
 		export \
 			--path ./build
 
@@ -83,7 +80,7 @@ release: ## Builds and releases mb artifacts
 		release-latest \
 			--version=${VERSION} \
 			--commit=${COMMIT} \
-			$(if $(POSTHOG_API_KEY),--post-hog-public-key $(POSTHOG_API_KEY)) \
+			--post-hog-public-key="$(POSTHOG_API_KEY)" \
 			--endpoint=env://BUCKET_ENDPOINT \
 			--bucket=env://BUCKET_NAME \
 			--access-key-id=env://BUCKET_ACCESS_KEY_ID \
@@ -94,7 +91,7 @@ nightly: ## Builds and releases mb artifacts with the nightly tag
 	dagger call \
 		release-nightly \
 			--commit=${COMMIT} \
-			$(if $(POSTHOG_API_KEY),--post-hog-public-key $(POSTHOG_API_KEY)) \
+			--post-hog-public-key="$(POSTHOG_API_KEY)" \
 			--endpoint=env://BUCKET_ENDPOINT \
 			--bucket=env://BUCKET_NAME \
 			--access-key-id=env://BUCKET_ACCESS_KEY_ID \
