@@ -1,9 +1,12 @@
 package mixtapes
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -11,12 +14,21 @@ import (
 	"github.com/papercomputeco/masterblaster/pkg/ui"
 )
 
-// knownMixtapes is the list of mixtape names published in the default registry.
-// Update this list when new mixtapes are added to download.stereos.ai.
-var knownMixtapes = []string{
-	"coder-arm64",
-	"coder-x86",
-}
+// catalogTimeout bounds how long ListCatalog will wait on the registry's
+// /v2/_catalog endpoint before falling back to the offline list.
+const catalogTimeout = 10 * time.Second
+
+// fallbackMixtapes is used only when the registry catalog query fails
+// (offline, DNS, registry down). Keep this list minimal — it should only
+// contain names known to have a working :latest manifest.
+var fallbackMixtapes = []string{"coder"}
+
+// priorityMixtapes are surfaced first in catalog listings. Lower number =
+// higher priority; entries not in the map sort after all priority entries
+// and are then ordered alphabetically. Currently only "coder" has a fully
+// working multi-arch :latest manifest; remove this bias once the other
+// mixtapes are republished.
+var priorityMixtapes = map[string]int{"coder": 0}
 
 // CatalogEntry describes a mixtape repository in the remote registry.
 type CatalogEntry struct {
@@ -30,16 +42,75 @@ type TagEntry struct {
 	Tag     string // Tag string (e.g. "latest", "0.1.0")
 }
 
-// ListCatalog returns the known mixtape repositories in the default registry.
+// ListCatalog queries the OCI registry's /v2/_catalog endpoint for the
+// repositories under the mixtapes/ prefix and returns them as CatalogEntries.
+// On network failure or an empty result it falls back to a small hardcoded
+// list of names known to have a working :latest manifest.
 func ListCatalog() ([]CatalogEntry, error) {
+	reg, err := name.NewRegistry(DefaultDownloadRegistry)
+	if err != nil {
+		return nil, fmt.Errorf("parsing registry %q: %w", DefaultDownloadRegistry, err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), catalogTimeout)
+	defer cancel()
+
+	repos, err := remote.Catalog(ctx, reg)
+	if err != nil {
+		ui.Warn("registry catalog query failed (%v); using fallback list", err)
+		return fallbackCatalog(), nil
+	}
+
+	prefix := defaultRepoPrefix + "/"
 	var entries []CatalogEntry
-	for _, m := range knownMixtapes {
+	for _, r := range repos {
+		short := strings.TrimPrefix(r, prefix)
+		if short == "" || short == r {
+			// Either empty after trimming, or the prefix wasn't there at all.
+			continue
+		}
 		entries = append(entries, CatalogEntry{
+			Name: short,
+			Repo: DefaultDownloadRegistry + "/" + r,
+		})
+	}
+
+	if len(entries) == 0 {
+		return fallbackCatalog(), nil
+	}
+
+	sortCatalog(entries)
+	return entries, nil
+}
+
+// sortCatalog orders entries by priorityMixtapes first, then alphabetically
+// by short name. Stable so equal-priority entries keep input order.
+func sortCatalog(entries []CatalogEntry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		pi, oki := priorityMixtapes[entries[i].Name]
+		pj, okj := priorityMixtapes[entries[j].Name]
+		switch {
+		case oki && !okj:
+			return true
+		case !oki && okj:
+			return false
+		case oki && okj && pi != pj:
+			return pi < pj
+		default:
+			return entries[i].Name < entries[j].Name
+		}
+	})
+}
+
+func fallbackCatalog() []CatalogEntry {
+	out := make([]CatalogEntry, 0, len(fallbackMixtapes))
+	for _, m := range fallbackMixtapes {
+		out = append(out, CatalogEntry{
 			Name: m,
 			Repo: DefaultDownloadRegistry + "/" + defaultRepoPrefix + "/" + m,
 		})
 	}
-	return entries, nil
+	return out
 }
 
 // ListTags queries the OCI registry for all tags of a given mixtape.
