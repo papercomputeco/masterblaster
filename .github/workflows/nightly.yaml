@@ -14,7 +14,7 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
     steps:
@@ -49,7 +49,7 @@ jobs:
     name: Move up Nightly tag
     needs: check
     if: needs.check.outputs.should_build == 'true'
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +64,7 @@ jobs:
     name: Build Linux
     needs: [check, move-nightly-tag]
     if: needs.check.outputs.should_build == 'true'
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
@@ -130,7 +130,7 @@ jobs:
   upload:
     name: Upload Nightly Artifacts
     needs: [build-linux, build-darwin]
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4

@@ -18,7 +18,7 @@ concurrency:
 jobs:
   build-linux:
     name: Build (Linux)
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
 
     steps:
       - name: Checkout repository
@@ -83,10 +83,10 @@ jobs:
             runner: macos-15
             artifact: darwin-arm64-binaries
           - os: Linux (amd64)
-            runner: ubuntu-latest
+            runner: depot-ubuntu-24.04
             artifact: linux-amd64-binaries
           - os: Linux (arm64)
-            runner: ubuntu-22.04-arm
+            runner: depot-ubuntu-24.04-arm
             artifact: linux-arm64-binaries
 
     steps:
