@@ -10,7 +10,7 @@ env:
 jobs:
   build-linux:
     name: Build & Upload Linux
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     permissions:
       contents: write
 
@@ -82,7 +82,7 @@ jobs:
   upload:
     name: Upload Release Artifacts
     needs: [build-linux, build-darwin]
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
     permissions:
       contents: write
 
