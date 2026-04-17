@@ -36,6 +36,11 @@ type Instance struct {
 	// For QEMU with TCP fallback, this is a TCP port on localhost.
 	VsockPort int `json:"vsock_port"`
 
+	// VsockCID is the guest context ID for native AF_VSOCK control plane.
+	// Non-zero when this VM uses vsock (Linux backend); zero for TCP-only
+	// backends (macOS, WSL2, hosts without vhost_vsock).
+	VsockCID uint32 `json:"vsock_cid,omitempty"`
+
 	// SSHPort is the host port forwarded to guest port 22.
 	SSHPort int `json:"ssh_port"`
 

@@ -10,9 +10,16 @@ import (
 // a StereOS guest VM. Different backends use different transports:
 //
 //   - TCPTransport: connects via TCP through QEMU user-mode networking
-//     (hostfwd). Used on macOS/HVF where native vsock is unavailable.
-//   - VsockTransport (future): connects via AF_VSOCK on Linux/KVM.
-//     Requires golang.org/x/sys/unix for socket creation.
+//     (hostfwd). Fallback for hosts without vhost-vsock (macOS/HVF, WSL2,
+//     and Linux kernels without vhost_vsock loaded).
+//   - VsockTransport: connects via AF_VSOCK on Linux, against a QEMU
+//     vhost-vsock-pci device (transport_linux.go). Preferred when
+//     available — no SLIRP overhead and control plane survives
+//     `network.mode = "none"`.
+//   - FuncTransport: wraps a caller-supplied dial function. Used by the
+//     Apple Virtualization.framework backend to reach stereosd through
+//     vz.VirtioSocketDevice without importing the darwin-only vz package
+//     into pkg/vsock.
 //   - VirtioSerialTransport (future): connects via a chardev unix socket
 //     backed by virtio-serial. Works on macOS/HVF without guest networking.
 type Transport interface {
@@ -64,20 +71,3 @@ func (f *FuncTransport) Dial(timeout time.Duration) (net.Conn, error) {
 
 // String returns the human-readable label.
 func (f *FuncTransport) String() string { return f.Label }
-
-// NOTE: VsockTransport for Linux/KVM (AF_VSOCK CID:3 port 1024) will be
-// implemented when Linux backend support is built. It requires:
-//
-//   import "golang.org/x/sys/unix"
-//
-//   type VsockTransport struct {
-//       CID  uint32
-//       Port uint32
-//   }
-//
-//   func (t *VsockTransport) Dial(timeout time.Duration) (net.Conn, error) {
-//       fd, _ := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM, 0)
-//       addr := &unix.SockaddrVM{CID: t.CID, Port: t.Port}
-//       unix.Connect(fd, addr)
-//       return net.FileConn(os.NewFile(uintptr(fd), "vsock"))
-//   }

@@ -3,6 +3,7 @@ package vm
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -169,16 +170,32 @@ func (q *QEMUBackend) boot(ctx context.Context, inst *Instance, cfg *config.Jcar
 	}
 	inst.SSHPort = sshPort
 
-	// Allocate a TCP port for the stereosd control plane.
-	// TODO(@jpmcb): Once native AF_VSOCK transport is implemented for
-	// Linux/KVM, this can be made conditional on ControlPlaneMode == "tcp".
-	// For now, all platforms use TCP through QEMU user-mode networking
-	// and stereosd listens on TCP via --listen-mode auto.
-	vsockTCPPort, err := allocatePort()
-	if err != nil {
-		return fmt.Errorf("allocating control plane port: %w", err)
+	// Resolve effective control plane mode. The platform may request vsock,
+	// but if this host doesn't actually have vhost-vsock (WSL2, or a kernel
+	// without the module loaded) we fall back to TCP hostfwd rather than
+	// fail the boot.
+	effectiveMode := q.platform.ControlPlaneMode
+	if effectiveMode == "vsock" && !HostHasVsock() {
+		log.Printf("vsock: host lacks /dev/vhost-vsock (or is running under WSL2); falling back to TCP control plane")
+		effectiveMode = "tcp"
 	}
-	inst.VsockPort = vsockTCPPort
+
+	if effectiveMode == "vsock" {
+		cid, err := allocateVsockCID(q.baseDir)
+		if err != nil {
+			return fmt.Errorf("allocating vsock CID: %w", err)
+		}
+		inst.VsockCID = cid
+		inst.VsockPort = 0 // no TCP hostfwd needed
+	} else {
+		// TCP control plane: allocate a host port and forward it to the
+		// guest's stereosd listener through SLIRP.
+		vsockTCPPort, err := allocatePort()
+		if err != nil {
+			return fmt.Errorf("allocating control plane port: %w", err)
+		}
+		inst.VsockPort = vsockTCPPort
+	}
 
 	inst.QMPSocket = filepath.Join(inst.Dir, "qmp.sock")
 
@@ -203,6 +220,7 @@ func (q *QEMUBackend) boot(ctx context.Context, inst *Instance, cfg *config.Jcar
 		NetworkMode: cfg.Network.Mode,
 		SSHPort:     inst.SSHPort,
 		VsockPort:   inst.VsockPort,
+		VsockCID:    inst.VsockCID,
 		SSHKeyPath:  sshKeyPath,
 		Backend:     "qemu",
 	}
@@ -265,10 +283,30 @@ func (q *QEMUBackend) WaitQEMU() error {
 	return q.qemuCmd.Wait()
 }
 
+// clearVsockCIDOnStop persists VsockCID=0 to state.json once the VM is
+// confirmed stopped, so a subsequent `mb start` can reuse the CID via
+// allocateVsockCID instead of marking it permanently consumed. Idempotent
+// and best-effort: a missing state file or already-zero CID is a no-op,
+// and a write failure is swallowed (the worst case is that the next
+// allocation skips this CID, which is harmless given the 2^31 space).
+func clearVsockCIDOnStop(inst *Instance) {
+	if inst.VMState != StateStopped {
+		return
+	}
+	state, err := loadState(inst.Dir)
+	if err != nil || state.VsockCID == 0 {
+		return
+	}
+	state.VsockCID = 0
+	_ = saveState(inst.Dir, state)
+	inst.VsockCID = 0
+}
+
 // Down gracefully stops the VM.
 func (q *QEMUBackend) Down(ctx context.Context, inst *Instance, timeout time.Duration) error {
+	defer clearVsockCIDOnStop(inst)
 	// First try stereosd shutdown (preferred: allows stereosd to unmount, sync, etc.)
-	if inst.VsockPort > 0 || q.platform.ControlPlaneMode == "vsock" {
+	if inst.VsockPort > 0 || inst.VsockCID > 0 {
 		if err := q.controlPlaneShutdown(ctx, inst); err == nil {
 			// Wait for process to exit
 			if q.waitForExit(ctx, inst, timeout) {
@@ -299,6 +337,7 @@ func (q *QEMUBackend) Down(ctx context.Context, inst *Instance, timeout time.Dur
 
 // ForceDown immediately terminates the VM process.
 func (q *QEMUBackend) ForceDown(_ context.Context, inst *Instance) error {
+	defer clearVsockCIDOnStop(inst)
 	if inst.PID == 0 {
 		pidData, err := os.ReadFile(inst.PIDFilePath())
 		if err != nil {
@@ -449,6 +488,7 @@ func (q *QEMUBackend) LoadInstance(name string) (*Instance, error) {
 		QMPSocket:  filepath.Join(vmDir, "qmp.sock"),
 		SSHPort:    state.SSHPort,
 		VsockPort:  state.VsockPort,
+		VsockCID:   state.VsockCID,
 		SSHKeyPath: state.SSHKeyPath,
 	}
 
@@ -477,13 +517,32 @@ func (q *QEMUBackend) startQEMU(_ context.Context, inst *Instance, cfg *config.J
 		return fmt.Errorf("building QEMU args: %w", err)
 	}
 
+	// Capture QEMU stderr/stdout to a per-VM file. Without this, a QEMU
+	// launch failure (bad machine type option, missing firmware path, etc.)
+	// leaves no trace: vmhost.log only records the "booting" intent, and
+	// the serial log never gets populated because QEMU exited before
+	// opening it.
+	//
+	// Append rather than truncate so a retry after a failed boot does not
+	// overwrite the prior crash log — the whole point of capturing this
+	// is forensic, and the most common time to look at it is right after
+	// re-running `mb start`.
+	qemuLogPath := filepath.Join(inst.Dir, "qemu.log")
+	qemuLog, err := os.OpenFile(qemuLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("opening qemu log %s: %w", qemuLogPath, err)
+	}
+
 	cmd := exec.Command(qemuBin, args...)
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = os.Stdout
+	cmd.Stderr = qemuLog
+	cmd.Stdout = qemuLog
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting QEMU: %w\nCheck serial log: %s", err, inst.SerialLogPath())
+		_ = qemuLog.Close()
+		return fmt.Errorf("starting QEMU: %w\nCheck qemu log: %s (serial log: %s)", err, qemuLogPath, inst.SerialLogPath())
 	}
+	// Child has its own FD; safe to close the parent's copy.
+	_ = qemuLog.Close()
 
 	q.qemuCmd = cmd
 	inst.PID = cmd.Process.Pid
@@ -519,8 +578,11 @@ func (q *QEMUBackend) buildArgs(inst *Instance, cfg *config.JcardConfig, kernelA
 	// Parse memory for QEMU (convert GiB -> G, MiB -> M, etc.)
 	memory := convertSizeForQEMU(cfg.Resources.Memory)
 
-	// Machine type and acceleration from platform config
-	machineArg := fmt.Sprintf("%s,accel=%s,highmem=on",
+	// Machine type and acceleration from platform config. The platform's
+	// MachineType field is the full machine spec including any per-platform
+	// options (e.g. "virt,highmem=on" for aarch64, "q35" for x86_64 — the
+	// `highmem` option is aarch64-virt-specific and QEMU rejects it on q35).
+	machineArg := fmt.Sprintf("%s,accel=%s",
 		q.platform.DefaultMachineType(), q.platform.Accelerator)
 
 	args := []string{
@@ -576,11 +638,12 @@ func (q *QEMUBackend) buildArgs(inst *Instance, cfg *config.JcardConfig, kernelA
 	// Networking
 	args = append(args, q.buildNetworkArgs(inst, cfg)...)
 
-	// Control plane device: native vsock when available, otherwise the
-	// stereosd port is forwarded via TCP hostfwd in buildNetworkArgs.
-	if q.platform.ControlPlaneMode == "vsock" {
+	// Control plane device: native vsock when the effective mode resolved
+	// to vsock (boot() assigns a non-zero VsockCID in that case). Otherwise
+	// the stereosd port is forwarded via TCP hostfwd in buildNetworkArgs.
+	if inst.VsockCID > 0 {
 		args = append(args,
-			"-device", fmt.Sprintf("%s,guest-cid=%d", q.platform.VsockDevice, vsock.VsockGuestCID),
+			"-device", fmt.Sprintf("%s,guest-cid=%d", q.platform.VsockDevice, inst.VsockCID),
 		)
 	}
 
@@ -619,10 +682,12 @@ func (q *QEMUBackend) buildNetworkArgs(inst *Instance, cfg *config.JcardConfig) 
 		// Always forward SSH
 		hostfwds := fmt.Sprintf("hostfwd=tcp::%d-:22", inst.SSHPort)
 
-		// Forward stereosd control plane via TCP through SLIRP.
-		// TODO(@jpmcb): Once native AF_VSOCK transport is implemented for
-		// Linux/KVM, this can be skipped when ControlPlaneMode == "vsock".
-		hostfwds += fmt.Sprintf(",hostfwd=tcp::%d-:%d", inst.VsockPort, vsock.VsockPort)
+		// Forward stereosd control plane via TCP only when vsock isn't in
+		// use. With a native vsock CID allocated, mb dials AF_VSOCK
+		// directly and the guest needs no port forward.
+		if inst.VsockCID == 0 && inst.VsockPort > 0 {
+			hostfwds += fmt.Sprintf(",hostfwd=tcp::%d-:%d", inst.VsockPort, vsock.VsockPort)
+		}
 
 		// Add configured port forwards
 		for _, fwd := range cfg.Network.Forwards {
@@ -724,16 +789,14 @@ func (q *QEMUBackend) controlPlaneShutdown(ctx context.Context, inst *Instance) 
 	return client.Shutdown(ctx, "mb down")
 }
 
-// controlPlaneTransport returns the appropriate Transport for connecting
-// to stereosd based on the platform's control plane mode.
-//
-// TODO(@jpmcb): Implement native AF_VSOCK transport for Linux/KVM.
-// When ControlPlaneMode == "vsock", this should return a VsockTransport
-// that dials AF_VSOCK CID:3 port 1024 directly, bypassing TCP/SLIRP.
-// See the VsockTransport sketch in pkg/vsock/transport.go.
+// controlPlaneTransport returns the appropriate Transport for connecting to
+// stereosd. Selection is per-instance: boot() has already resolved the
+// effective mode (vsock vs tcp) and populated either VsockCID or VsockPort.
+// A non-zero VsockCID means AF_VSOCK; otherwise fall back to TCP hostfwd.
 func (q *QEMUBackend) controlPlaneTransport(inst *Instance) vsock.Transport {
-	// All platforms currently use TCP through QEMU user-mode networking.
-	// stereosd inside the guest listens on TCP via --listen-mode auto.
+	if inst.VsockCID > 0 {
+		return &vsock.VsockTransport{CID: inst.VsockCID, Port: vsock.VsockPort}
+	}
 	return &vsock.TCPTransport{Host: "127.0.0.1", Port: inst.VsockPort}
 }
 

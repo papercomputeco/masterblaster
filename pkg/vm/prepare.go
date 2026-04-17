@@ -140,6 +140,7 @@ func LoadInstanceFromDisk(baseDir, name string) (*Instance, error) {
 		QMPSocket: filepath.Join(vmDir, "qmp.sock"),
 		SSHPort:   state.SSHPort,
 		VsockPort: state.VsockPort,
+		VsockCID:  state.VsockCID,
 	}
 
 	// Try to read QEMU PID (if applicable)

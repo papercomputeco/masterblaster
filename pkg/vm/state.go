@@ -19,7 +19,12 @@ type StateFile struct {
 	NetworkMode string    `json:"network_mode"`
 	SSHPort     int       `json:"ssh_port"`
 	VsockPort   int       `json:"vsock_port"`
-	ConfigPath  string    `json:"config_path,omitempty"`
+	// VsockCID is the guest context ID for native AF_VSOCK control plane.
+	// Set when ControlPlaneMode resolves to "vsock" at boot; zero when the
+	// VM uses TCP hostfwd. Persisted so `mb down` after a daemon restart
+	// can still address the guest.
+	VsockCID   uint32 `json:"vsock_cid,omitempty"`
+	ConfigPath string `json:"config_path,omitempty"`
 
 	// SSHKeyPath is the path to the ephemeral SSH private key, relative
 	// to the VM directory or absolute. Persisted so the key survives
