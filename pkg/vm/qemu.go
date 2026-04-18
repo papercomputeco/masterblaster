@@ -162,6 +162,18 @@ func (q *QEMUBackend) Start(ctx context.Context, inst *Instance) error {
 //
 // kernelArtifacts may be nil, in which case QEMU boots via EFI firmware.
 func (q *QEMUBackend) boot(ctx context.Context, inst *Instance, cfg *config.JcardConfig, kernelArtifacts *KernelArtifacts) error {
+	// Validate bridged networking prerequisites before doing any work.
+	if cfg.Network.Mode == "bridged" && q.platform.BridgeHelper == "" && q.platform.Accelerator == "kvm" {
+		return fmt.Errorf("bridged networking on Linux requires qemu-bridge-helper, but it was not found.\n\n" +
+			"Install it with your package manager:\n" +
+			"  Ubuntu/Debian: sudo apt install qemu-system-common\n" +
+			"  Fedora/RHEL:   sudo dnf install qemu-common\n" +
+			"  Arch Linux:    sudo pacman -S qemu-base\n" +
+			"  NixOS:         add qemu to environment.systemPackages\n\n" +
+			"Then ensure your bridge is listed in /etc/qemu/bridge.conf:\n" +
+			"  echo 'allow virbr0' | sudo tee -a /etc/qemu/bridge.conf")
+	}
+
 	// Allocate ports
 	sshPort, err := allocatePort()
 	if err != nil {
@@ -169,16 +181,16 @@ func (q *QEMUBackend) boot(ctx context.Context, inst *Instance, cfg *config.Jcar
 	}
 	inst.SSHPort = sshPort
 
-	// Allocate a TCP port for the stereosd control plane.
-	// TODO(@jpmcb): Once native AF_VSOCK transport is implemented for
-	// Linux/KVM, this can be made conditional on ControlPlaneMode == "tcp".
-	// For now, all platforms use TCP through QEMU user-mode networking
-	// and stereosd listens on TCP via --listen-mode auto.
-	vsockTCPPort, err := allocatePort()
-	if err != nil {
-		return fmt.Errorf("allocating control plane port: %w", err)
+	// Allocate a TCP port for the stereosd control plane when using TCP
+	// transport (macOS/HVF). With native AF_VSOCK (Linux/KVM), the control
+	// plane bypasses TCP entirely, so no host port is needed.
+	if q.platform.ControlPlaneMode != "vsock" {
+		vsockTCPPort, err := allocatePort()
+		if err != nil {
+			return fmt.Errorf("allocating control plane port: %w", err)
+		}
+		inst.VsockPort = vsockTCPPort
 	}
-	inst.VsockPort = vsockTCPPort
 
 	inst.QMPSocket = filepath.Join(inst.Dir, "qmp.sock")
 
@@ -520,8 +532,11 @@ func (q *QEMUBackend) buildArgs(inst *Instance, cfg *config.JcardConfig, kernelA
 	memory := convertSizeForQEMU(cfg.Resources.Memory)
 
 	// Machine type and acceleration from platform config
-	machineArg := fmt.Sprintf("%s,accel=%s,highmem=on",
+	machineArg := fmt.Sprintf("%s,accel=%s",
 		q.platform.DefaultMachineType(), q.platform.Accelerator)
+	if q.platform.MachineProps != "" {
+		machineArg += "," + q.platform.MachineProps
+	}
 
 	args := []string{
 		// Machine + acceleration
@@ -574,7 +589,11 @@ func (q *QEMUBackend) buildArgs(inst *Instance, cfg *config.JcardConfig, kernelA
 	)
 
 	// Networking
-	args = append(args, q.buildNetworkArgs(inst, cfg)...)
+	netArgs, err := q.buildNetworkArgs(inst, cfg)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, netArgs...)
 
 	// Control plane device: native vsock when available, otherwise the
 	// stereosd port is forwarded via TCP hostfwd in buildNetworkArgs.
@@ -603,26 +622,44 @@ func (q *QEMUBackend) buildArgs(inst *Instance, cfg *config.JcardConfig, kernelA
 // buildNetworkArgs constructs QEMU network arguments based on config.
 // When the control plane uses TCP transport, the stereosd port is forwarded
 // here alongside SSH. With native vsock, only SSH is forwarded.
-func (q *QEMUBackend) buildNetworkArgs(inst *Instance, cfg *config.JcardConfig) []string {
+func (q *QEMUBackend) buildNetworkArgs(inst *Instance, cfg *config.JcardConfig) ([]string, error) {
 	switch cfg.Network.Mode {
 	case "none":
-		return []string{"-nic", "none"}
+		return []string{"-nic", "none"}, nil
 
 	case "bridged":
-		// bridged mode uses vmnet-shared on macOS
+		if q.platform.BridgeHelper != "" {
+			// Linux: use QEMU bridge helper with tap networking.
+			// The helper creates a tap device and attaches it to the
+			// specified bridge. It requires:
+			//   1. qemu-bridge-helper with setuid or CAP_NET_ADMIN
+			//   2. The bridge listed in /etc/qemu/bridge.conf
+			//   3. A pre-existing bridge interface (e.g. virbr0)
+			bridge := cfg.Network.Bridge
+			if bridge == "" {
+				bridge = "virbr0"
+			}
+			return []string{
+				"-netdev", fmt.Sprintf("bridge,id=net0,br=%s,helper=%s", bridge, q.platform.BridgeHelper),
+				"-device", "virtio-net-pci,netdev=net0",
+			}, nil
+		}
+		// macOS: vmnet-shared (no bridge helper needed).
 		return []string{
 			"-netdev", "vmnet-shared,id=net0",
 			"-device", "virtio-net-pci,netdev=net0",
-		}
+		}, nil
 
 	default: // "nat"
 		// Always forward SSH
 		hostfwds := fmt.Sprintf("hostfwd=tcp::%d-:22", inst.SSHPort)
 
-		// Forward stereosd control plane via TCP through SLIRP.
-		// TODO(@jpmcb): Once native AF_VSOCK transport is implemented for
-		// Linux/KVM, this can be skipped when ControlPlaneMode == "vsock".
-		hostfwds += fmt.Sprintf(",hostfwd=tcp::%d-:%d", inst.VsockPort, vsock.VsockPort)
+		// Forward stereosd control plane via TCP through SLIRP when not
+		// using native vsock. With AF_VSOCK (Linux/KVM), the control plane
+		// bypasses guest networking entirely.
+		if q.platform.ControlPlaneMode != "vsock" {
+			hostfwds += fmt.Sprintf(",hostfwd=tcp::%d-:%d", inst.VsockPort, vsock.VsockPort)
+		}
 
 		// Add configured port forwards
 		for _, fwd := range cfg.Network.Forwards {
@@ -632,7 +669,7 @@ func (q *QEMUBackend) buildNetworkArgs(inst *Instance, cfg *config.JcardConfig) 
 		return []string{
 			"-netdev", fmt.Sprintf("user,id=net0,%s", hostfwds),
 			"-device", "virtio-net-pci,netdev=net0",
-		}
+		}, nil
 	}
 }
 
@@ -727,13 +764,15 @@ func (q *QEMUBackend) controlPlaneShutdown(ctx context.Context, inst *Instance) 
 // controlPlaneTransport returns the appropriate Transport for connecting
 // to stereosd based on the platform's control plane mode.
 //
-// TODO(@jpmcb): Implement native AF_VSOCK transport for Linux/KVM.
-// When ControlPlaneMode == "vsock", this should return a VsockTransport
-// that dials AF_VSOCK CID:3 port 1024 directly, bypassing TCP/SLIRP.
-// See the VsockTransport sketch in pkg/vsock/transport.go.
+//   - "vsock": Native AF_VSOCK via vhost-vsock-pci (Linux/KVM only).
+//     Provides an isolated control plane that works even with
+//     network.mode = "none". Implemented in qemu_linux.go.
+//   - "tcp": TCP through QEMU user-mode networking (hostfwd).
+//     Used on macOS/HVF where native vsock is unavailable.
 func (q *QEMUBackend) controlPlaneTransport(inst *Instance) vsock.Transport {
-	// All platforms currently use TCP through QEMU user-mode networking.
-	// stereosd inside the guest listens on TCP via --listen-mode auto.
+	if q.platform.ControlPlaneMode == "vsock" {
+		return newVsockTransport()
+	}
 	return &vsock.TCPTransport{Host: "127.0.0.1", Port: inst.VsockPort}
 }
 

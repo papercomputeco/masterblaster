@@ -62,6 +62,17 @@ type QEMUPlatformConfig struct {
 	// Set to "none" (O_DIRECT) when using io_uring for best performance,
 	// or leave empty to use QEMU's default (writeback).
 	DiskCache string
+
+	// MachineProps are extra comma-separated properties appended to the
+	// -machine argument. For example, "highmem=on" is valid for the ARM
+	// "virt" machine type but not for x86_64 "q35".
+	MachineProps string
+
+	// BridgeHelper is the resolved path to the QEMU bridge helper binary
+	// (qemu-bridge-helper). Only set on Linux where bridged networking
+	// uses tap devices via the helper. Empty on macOS where vmnet-shared
+	// is used instead.
+	BridgeHelper string
 }
 
 // DefaultMachineType returns the machine type, defaulting to "virt".
