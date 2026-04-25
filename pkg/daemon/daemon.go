@@ -259,6 +259,9 @@ func (d *Daemon) handleRequest(ctx context.Context, req *Request) Response {
 	case MethodList:
 		return d.handleList(ctx)
 
+	case MethodApply:
+		return d.handleApply(ctx, req)
+
 	default:
 		return Response{Error: fmt.Sprintf("unknown method: %s", req.Method)}
 	}
@@ -444,6 +447,59 @@ func (d *Daemon) spawnVMHost(_ context.Context, mvm *managedVM, backend string) 
 	}
 
 	return fmt.Errorf("vmhost for %q did not become ready within 120s (check %s)", inst.Name, inst.VMHostLogPath())
+}
+
+func (d *Daemon) handleApply(_ context.Context, req *Request) Response {
+	if req.ConfigPath == "" {
+		return Response{Error: "config_path is required"}
+	}
+
+	cfg, err := config.Load(req.ConfigPath)
+	if err != nil {
+		return Response{Error: fmt.Sprintf("loading config: %v", err)}
+	}
+
+	// Use name from request or config
+	name := req.Name
+	if name == "" {
+		name = cfg.Name
+	}
+
+	// Serialize the full config for transmission to the guest
+	cfgBytes, err := config.Marshal(cfg)
+	if err != nil {
+		return Response{Error: fmt.Sprintf("marshaling config: %v", err)}
+	}
+
+	// Find the running sandbox
+	mvm, err := d.resolveVM(name)
+	if err != nil {
+		return Response{Error: err.Error()}
+	}
+
+	// Verify the vmhost is alive
+	if mvm.client == nil || !mvm.client.IsAlive() {
+		return Response{Error: fmt.Sprintf("sandbox %q is not running", name)}
+	}
+
+	// Send the config and secrets through the vmhost to stereosd
+	d.logger.Printf("applying config to sandbox %q (%d bytes, %d secrets)", name, len(cfgBytes), len(cfg.Secrets))
+
+	if _, err := mvm.client.Apply(string(cfgBytes), cfg.Secrets); err != nil {
+		return Response{Error: fmt.Sprintf("applying config to sandbox %q: %v", name, err)}
+	}
+
+	// Update the saved jcard.toml on the host side
+	if err := os.WriteFile(mvm.inst.JcardPath(), cfgBytes, 0644); err != nil {
+		d.logger.Printf("warning: failed to update host-side jcard.toml: %v", err)
+	}
+
+	d.logger.Printf("config applied to sandbox %q", name)
+
+	return Response{
+		OK:        true,
+		Sandboxes: []SandboxInfo{d.instanceToInfo(mvm)},
+	}
 }
 
 func (d *Daemon) handleDown(_ context.Context, req *Request) Response {
