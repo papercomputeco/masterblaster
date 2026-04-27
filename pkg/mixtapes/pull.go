@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
@@ -134,8 +135,14 @@ func resolveImage(desc *remote.Descriptor) (v1.Image, error) {
 	}
 }
 
-// resolveFromIndex parses an OCI index and selects the raw-format manifest.
-// Falls back to the first manifest if no raw format is found.
+// resolveFromIndex parses an OCI index and selects the best manifest for the
+// running host, preferring raw disk format.
+//
+// Selection priority (see selectIndexManifest for the pure policy):
+//  1. Platform matches host GOOS/GOARCH AND has a raw disk layer
+//  2. Platform matches host GOOS/GOARCH (any format)
+//  3. Any manifest with a raw disk layer (index didn't set Platform)
+//  4. First manifest (last-resort fallback)
 func resolveFromIndex(desc *remote.Descriptor) (v1.Image, error) {
 	idx, err := desc.ImageIndex()
 	if err != nil {
@@ -147,27 +154,97 @@ func resolveFromIndex(desc *remote.Descriptor) (v1.Image, error) {
 		return nil, fmt.Errorf("reading index manifest: %w", err)
 	}
 
-	if len(indexManifest.Manifests) == 0 {
-		return nil, fmt.Errorf("index manifest contains no entries")
-	}
-
-	// Try each manifest to find the raw format.
-	// The raw format is listed first by convention, but we check explicitly.
-	for _, m := range indexManifest.Manifests {
-		img, err := idx.Image(m.Digest)
+	hasRaw := func(h v1.Hash) (bool, error) {
+		img, err := idx.Image(h)
 		if err != nil {
-			continue
+			return false, err
 		}
-		if hasRawDiskLayer(img) {
-			ui.Info("Selected raw disk format from index")
-			return img, nil
+		return hasRawDiskLayer(img), nil
+	}
+
+	digest, err := selectIndexManifest(indexManifest.Manifests, runtime.GOOS, runtime.GOARCH, hasRaw)
+	if err != nil {
+		return nil, err
+	}
+	return idx.Image(digest)
+}
+
+// hasRawDiskLayerFunc reports whether the manifest addressed by a given digest
+// contains a raw disk layer. Parameterised so selectIndexManifest stays
+// testable without a real OCI client.
+type hasRawDiskLayerFunc func(v1.Hash) (bool, error)
+
+// selectIndexManifest picks the best manifest digest from an OCI index's
+// manifest descriptors for the given host GOOS/GOARCH. See resolveFromIndex
+// for priority order.
+func selectIndexManifest(
+	manifests []v1.Descriptor,
+	goos, goarch string,
+	hasRaw hasRawDiskLayerFunc,
+) (v1.Hash, error) {
+	if len(manifests) == 0 {
+		return v1.Hash{}, fmt.Errorf("index manifest contains no entries")
+	}
+
+	platformMatch := func(p *v1.Platform) bool {
+		return p != nil && p.OS == goos && p.Architecture == goarch
+	}
+
+	var (
+		platformRaw, platformAny, anyRaw v1.Hash
+		hasT1, hasT2, hasT3              bool
+	)
+
+	for _, m := range manifests {
+		// Cache per-manifest raw-probe so we only load each manifest once.
+		var (
+			rawChecked, rawOK bool
+		)
+		checkRaw := func() bool {
+			if rawChecked {
+				return rawOK
+			}
+			rawChecked = true
+			ok, err := hasRaw(m.Digest)
+			rawOK = err == nil && ok
+			return rawOK
+		}
+
+		if platformMatch(m.Platform) {
+			if !hasT2 {
+				platformAny = m.Digest
+				hasT2 = true
+			}
+			if !hasT1 && checkRaw() {
+				platformRaw = m.Digest
+				hasT1 = true
+			}
+		}
+		if !hasT3 && checkRaw() {
+			anyRaw = m.Digest
+			hasT3 = true
+		}
+
+		// Early exit: we have the top-priority match.
+		if hasT1 {
+			break
 		}
 	}
 
-	// Fallback: use the first manifest.
-	ui.Warn("No raw disk format found in index, using first manifest")
-	firstDigest := indexManifest.Manifests[0].Digest
-	return idx.Image(firstDigest)
+	switch {
+	case hasT1:
+		ui.Info("Selected raw disk manifest for %s/%s from index", goos, goarch)
+		return platformRaw, nil
+	case hasT2:
+		ui.Warn("No raw format for %s/%s in index; using platform-matched manifest", goos, goarch)
+		return platformAny, nil
+	case hasT3:
+		ui.Warn("No %s/%s manifest in index; using any raw-format manifest (may not run on this host)", goos, goarch)
+		return anyRaw, nil
+	default:
+		ui.Warn("No raw format in index, using first manifest")
+		return manifests[0].Digest, nil
+	}
 }
 
 // hasRawDiskLayer checks whether an image contains a raw disk layer.
