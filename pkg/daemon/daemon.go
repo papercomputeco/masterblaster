@@ -404,10 +404,18 @@ func (d *Daemon) spawnVMHost(_ context.Context, mvm *managedVM, backend string) 
 		return fmt.Errorf("spawning vmhost: %w", err)
 	}
 
-	// Release the process so the daemon doesn't wait on it
-	if err := cmd.Process.Release(); err != nil {
-		return fmt.Errorf("releasing vmhost process: %w", err)
-	}
+	// Reap the child once it exits. vmhost runs in its own session (Setsid), so
+	// it survives daemon exit and keeps the VM alive across a daemon restart —
+	// but while this daemon is alive it remains the OS parent and must wait() on
+	// it. Without this, an exited vmhost lingers as a zombie and processAlive()
+	// (kill -0) still reports it as running, so `mb down` blocks for its full
+	// 45s timeout even though the VM stopped in ~1s. If the daemon exits first,
+	// init inherits and reaps vmhost instead.
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			d.logger.Printf("vmhost for %q exited: %v", inst.Name, err)
+		}
+	}()
 
 	// Poll vmhost.sock until it responds (same pattern as ensureDaemon)
 	client := vmhost.NewClient(inst.VMHostSocketPath())
