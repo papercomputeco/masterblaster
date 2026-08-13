@@ -7,7 +7,7 @@ permissions:
   contents: write
 
 env:
-  DAGGER_VERSION: "0.20.8"
+  DAGGER_VERSION: "0.21.8"
 
 jobs:
   create-release:
@@ -28,7 +28,7 @@ jobs:
           private-key: ${{ secrets.PAPER_COMPUTE_CO_BOT_PRIVATE_KEY }}
 
       - name: Install Dagger
-        uses: dagger/dagger-for-github@v8.2.0
+        uses: dagger/dagger-for-github@v8.4.1
         with:
           version: ${{ env.DAGGER_VERSION }}
 
