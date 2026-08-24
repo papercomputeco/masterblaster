@@ -4,9 +4,6 @@ on:
   release:
     types: [published]
 
-env:
-  DAGGER_VERSION: "0.20.8"
-
 jobs:
   build-linux:
     name: Build & Upload Linux
@@ -18,14 +15,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Dagger
-        uses: dagger/dagger-for-github@v8.2.0
-        with:
-          version: ${{ env.DAGGER_VERSION }}
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
+
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
 
       - name: Build and upload Linux release artifacts to bucket
         run: |
-          dagger call \
+          nix develop --command dagger call \
             release-latest \
               --version="${{ github.event.release.tag_name }}" \
               --commit="${{ github.sha }}" \
@@ -71,7 +69,6 @@ jobs:
       - name: Generate checksum
         run: shasum -a 256 build/darwin/arm64/mb > build/darwin/arm64/mb.sha256
 
-
       - name: Upload darwin artifacts for gh release
         uses: actions/upload-artifact@v4
         with:
@@ -102,15 +99,16 @@ jobs:
           name: darwin-release
           path: build/
 
-      - name: Install Dagger
-        uses: dagger/dagger-for-github@v8.2.0
-        with:
-          version: ${{ env.DAGGER_VERSION }}
+      - name: Install Nix
+        uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3.21.8
+
+      - name: Cache Nix store
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
 
       - name: Upload darwin artifacts to bucket
         run: |
           VERSION="${{ github.event.release.tag_name }}"
-          dagger call \
+          nix develop --command dagger call \
             upload-darwin-artifacts \
               --binary=./build/darwin/arm64/mb \
               --checksum=./build/darwin/arm64/mb.sha256 \
@@ -128,7 +126,7 @@ jobs:
 
       - name: Upload all artifacts to GitHub release
         run: |
-          dagger call -m github.com/papercomputeco/daggerverse/ghrelease \
+          nix develop --command dagger call -m github.com/papercomputeco/daggerverse/ghrelease@45e997aec734ec4875ff57bebed2317e1bd49185 \
               --token=env://GH_TOKEN \
             with-repo --repo="${{ github.repository }}" \
             with-assets --assets=./build \
