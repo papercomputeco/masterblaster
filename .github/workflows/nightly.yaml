@@ -61,7 +61,7 @@ jobs:
     name: Build Linux
     needs: [check, move-nightly-tag]
     if: needs.check.outputs.should_build == 'true'
-    runs-on: depot-ubuntu-24.04
+    runs-on: depot-ubuntu-24.04-4
 
     steps:
       - uses: actions/checkout@v4
