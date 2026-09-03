@@ -873,6 +873,40 @@ func newVzSocketTransport(socketDevice *vz.VirtioSocketDevice, port int, label s
 	}
 }
 
+// ControlPlaneApply sends updated configuration and secrets to stereosd
+// via the virtio-socket device. It connects to stereosd, sends the
+// serialized jcard.toml via set_config, and re-injects all secrets.
+func (a *AppleVirtBackend) ControlPlaneApply(ctx context.Context, name string, configContent string, secrets map[string]string) error {
+	a.mu.RLock()
+	avVM := a.live[name]
+	a.mu.RUnlock()
+
+	if avVM == nil {
+		return fmt.Errorf("VM %q not found in live map", name)
+	}
+
+	transport := newVzSocketTransport(avVM.socketDevice, vsock.VsockPort, "Apple Virt apply")
+	client, err := vsock.Connect(transport, 10*time.Second)
+	if err != nil {
+		return fmt.Errorf("connecting to stereosd: %w", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	// Send the updated configuration
+	if err := client.SetConfig(ctx, configContent); err != nil {
+		return fmt.Errorf("setting guest config: %w", err)
+	}
+
+	// Re-inject secrets
+	for sname, value := range secrets {
+		if err := client.InjectSecret(ctx, sname, value); err != nil {
+			return fmt.Errorf("injecting secret %q: %w", sname, err)
+		}
+	}
+
+	return nil
+}
+
 // controlPlaneShutdown sends a shutdown message to stereosd via the
 // virtio-socket device.
 func (a *AppleVirtBackend) controlPlaneShutdown(ctx context.Context, socketDevice *vz.VirtioSocketDevice) error {

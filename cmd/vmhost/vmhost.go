@@ -133,6 +133,10 @@ func (c *qemuController) Backend() string {
 	return "qemu"
 }
 
+func (c *qemuController) Apply(ctx context.Context, configContent string, secrets map[string]string) error {
+	return c.backend.ControlPlaneApply(ctx, c.inst, configContent, secrets)
+}
+
 func (c *qemuController) Wait() error {
 	return c.backend.WaitQEMU()
 }

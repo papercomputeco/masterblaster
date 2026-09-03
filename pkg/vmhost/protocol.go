@@ -11,6 +11,7 @@ const (
 	MethodStop      Method = "stop"
 	MethodForceStop Method = "force_stop"
 	MethodInfo      Method = "info"
+	MethodApply     Method = "apply"
 )
 
 // Request is the wire format for daemon -> vmhost RPC calls.
@@ -19,6 +20,10 @@ type Request struct {
 
 	// Stop parameters
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+
+	// Apply parameters
+	ConfigContent string            `json:"config_content,omitempty"` // serialized jcard.toml
+	Secrets       map[string]string `json:"secrets,omitempty"`        // name -> value
 }
 
 // Response is the wire format for vmhost -> daemon responses.

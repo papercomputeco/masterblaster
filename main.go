@@ -9,6 +9,7 @@ import (
 	"github.com/papercomputeco/masterblaster/pkg/ui"
 	"github.com/papercomputeco/masterblaster/pkg/utils"
 
+	applycmder "github.com/papercomputeco/masterblaster/cmd/apply"
 	destroycmder "github.com/papercomputeco/masterblaster/cmd/destroy"
 	downcmder "github.com/papercomputeco/masterblaster/cmd/down"
 	initcmder "github.com/papercomputeco/masterblaster/cmd/init"
@@ -52,6 +53,7 @@ func NewMbCmd() *cobra.Command {
 	cmd.AddCommand(servecmder.NewServeCmd(mbconfig.ConfigDir))
 	cmd.AddCommand(initcmder.NewInitCmd())
 	cmd.AddCommand(upcmder.NewUpCmd(mbconfig.ConfigDir))
+	cmd.AddCommand(applycmder.NewApplyCmd(mbconfig.ConfigDir))
 	cmd.AddCommand(downcmder.NewDownCmd(mbconfig.ConfigDir))
 	cmd.AddCommand(statuscmder.NewStatusCmd(mbconfig.ConfigDir))
 	cmd.AddCommand(destroycmder.NewDestroyCmd(mbconfig.ConfigDir))
