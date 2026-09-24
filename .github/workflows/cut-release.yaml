@@ -38,7 +38,7 @@ jobs:
               --repo="${{ github.repository }}" \
             with-source \
               --source=. \
-            create
+            create --cloud
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
