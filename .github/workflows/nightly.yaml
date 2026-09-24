@@ -83,7 +83,7 @@ jobs:
               --access-key-id=env://BUCKET_ACCESS_KEY_ID \
               --secret-access-key=env://BUCKET_SECRET_ACCESS_KEY \
             export \
-              --path=./build
+              --path=./build --cloud
         env:
           BUCKET_ENDPOINT: ${{ secrets.BUCKET_ENDPOINT }}
           BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
@@ -161,7 +161,7 @@ jobs:
               --checksum=./build/darwin/arm64/mb.sha256 \
               --endpoint=env://BUCKET_ENDPOINT \
               --prefixes="nightly/darwin/arm64" \
-              --secret-access-key=env://BUCKET_SECRET_ACCESS_KEY
+              --secret-access-key=env://BUCKET_SECRET_ACCESS_KEY --cloud
         env:
           BUCKET_ENDPOINT: ${{ secrets.BUCKET_ENDPOINT }}
           BUCKET_NAME: ${{ secrets.BUCKET_NAME }}
@@ -199,7 +199,7 @@ jobs:
             with-assets --assets=./build \
             with-flatten \
             with-tag --tag "nightly" \
-            upload
+            upload --cloud
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DAGGER_CLOUD_TOKEN: ${{ secrets.DAGGER_CLOUD_TOKEN }}
